@@ -55,6 +55,18 @@ func buildRequest(o options, program string, stdin io.Reader, stdinTTY bool) (*r
 		}
 	}
 	fail := func(err error) (*request, func(), error) { cleanup(); return nil, func() {}, err }
+	spool := func(input io.Reader) (string, error) {
+		f, err := os.CreateTemp("", "httpie-body-*")
+		if err != nil {
+			return "", err
+		}
+		temps = append(temps, f.Name())
+		_, err = io.Copy(f, input)
+		if closeErr := f.Close(); err == nil {
+			err = closeErr
+		}
+		return f.Name(), err
+	}
 	if len(o.args) == 0 {
 		return fail(fmt.Errorf("URL is required"))
 	}
@@ -251,20 +263,11 @@ func buildRequest(o options, program string, stdin io.Reader, stdinTTY bool) (*r
 	if fromStdin && !o.has("offline") && !o.has("compress") && (o.has("chunked") || explicitLength) {
 		liveInput = stdin
 	} else if fromStdin {
-		f, err := os.CreateTemp("", "httpie-stdin-*")
+		path, err := spool(stdin)
 		if err != nil {
 			return fail(err)
 		}
-		temps = append(temps, f.Name())
-		_, err = io.Copy(f, stdin)
-		closeErr := f.Close()
-		if err != nil {
-			return fail(err)
-		}
-		if closeErr != nil {
-			return fail(closeErr)
-		}
-		body = bodySource{{path: f.Name()}}
+		body = bodySource{{path: path}}
 	}
 	if o.has("raw") {
 		body = bodySource{{data: []byte(o.value("raw"))}}
@@ -307,6 +310,28 @@ func buildRequest(o options, program string, stdin io.Reader, stdinTTY bool) (*r
 				pairs = append(pairs, url.QueryEscape(it.key)+"="+url.QueryEscape(it.value))
 			}
 			body = bodySource{{data: []byte(strings.Join(pairs, "&"))}}
+		}
+	}
+	for i, part := range body {
+		if part.path == "" {
+			continue
+		}
+		info, err := os.Stat(part.path)
+		if err != nil {
+			return fail(err)
+		}
+		if info.Mode().IsRegular() {
+			continue
+		}
+		// Pipes and process substitutions report a zero or partial size, so read them up front.
+		f, err := os.Open(part.path)
+		if err != nil {
+			return fail(err)
+		}
+		body[i].path, err = spool(f)
+		f.Close()
+		if err != nil {
+			return fail(err)
 		}
 	}
 	size, err := body.size()

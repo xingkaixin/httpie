@@ -272,7 +272,8 @@ func (t *transport) send(ctx context.Context, r *request) (*http.Response, []hea
 		return nil, nil, err
 	}
 	uri := r.URL.RequestURI()
-	if p != nil && r.URL.Scheme == "http" && !strings.HasPrefix(p.Scheme, "socks") {
+	forwarded := p != nil && r.URL.Scheme == "http" && !strings.HasPrefix(p.Scheme, "socks")
+	if forwarded {
 		u := *r.URL
 		u.User = nil
 		u.Fragment = ""
@@ -287,7 +288,7 @@ func (t *transport) send(ctx context.Context, r *request) (*http.Response, []hea
 			return nil, nil, err
 		}
 	}
-	if p != nil && p.User != nil && r.URL.Scheme == "http" {
+	if forwarded && p.User != nil {
 		pass, _ := p.User.Password()
 		token := base64.StdEncoding.EncodeToString([]byte(p.User.Username() + ":" + pass))
 		fmt.Fprintf(w, "Proxy-Authorization: Basic %s\r\n", token)

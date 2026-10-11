@@ -14,7 +14,9 @@ import (
 
 func TestSOCKSProxies(t *testing.T) {
 	cli := isolatedCLI(t)
-	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, "proxied") }))
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "proxied", r.Header.Get("Proxy-Authorization"))
+	}))
 	defer origin.Close()
 	for _, protocol := range []string{"socks4", "socks4a", "socks5", "socks5h"} {
 		t.Run(protocol, func(t *testing.T) {

@@ -420,3 +420,27 @@ func quoteURI(value string) string {
 	}
 	return out.String()
 }
+
+func (r *request) moveHeaderBefore(name, before string) {
+	if strings.EqualFold(name, before) {
+		return
+	}
+	index := -1
+	for i := len(r.headers) - 1; i >= 0; i-- {
+		if strings.EqualFold(r.headers[i].Name, name) {
+			index = i
+			break
+		}
+	}
+	if index < 0 {
+		return
+	}
+	for i, h := range r.headers {
+		if strings.EqualFold(h.Name, before) && i < index {
+			value := r.headers[index]
+			copy(r.headers[i+1:index+1], r.headers[i:index])
+			r.headers[i] = value
+			return
+		}
+	}
+}

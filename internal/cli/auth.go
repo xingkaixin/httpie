@@ -81,14 +81,7 @@ func applyAuth(r *request, kind, raw string) {
 	if kind != "basic" && kind != "bearer" {
 		return
 	}
-	auth := r.headers[len(r.headers)-1]
-	for i, h := range r.headers {
-		if strings.EqualFold(h.Name, "User-Agent") {
-			copy(r.headers[i+1:], r.headers[i:len(r.headers)-1])
-			r.headers[i] = auth
-			break
-		}
-	}
+	r.moveHeaderBefore("Authorization", "User-Agent")
 }
 
 var netrcToken = regexp.MustCompile(`"(?:[^"\\]|\\.)*"|'[^']*'|[^\s]+`)

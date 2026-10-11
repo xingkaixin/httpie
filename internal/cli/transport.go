@@ -37,6 +37,19 @@ func (c *idleConn) Write(p []byte) (int, error) {
 	return c.Conn.Write(p)
 }
 
+type idleDialer struct{ net.Dialer }
+
+func (d *idleDialer) Dial(network, address string) (net.Conn, error) {
+	return d.DialContext(context.Background(), network, address)
+}
+func (d *idleDialer) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	conn, err := d.Dialer.DialContext(ctx, network, address)
+	if err != nil {
+		return nil, err
+	}
+	return &idleConn{Conn: conn, timeout: d.Timeout}, nil
+}
+
 type transport struct {
 	options options
 	tls     *tlsSettings
@@ -73,6 +86,9 @@ func (t *transport) proxyFor(u *url.URL) (*url.URL, error) {
 		if scheme == u.Scheme || scheme == "all" {
 			if raw == "" {
 				return nil, nil
+			}
+			if !strings.Contains(raw, "://") {
+				raw = "http://" + raw
 			}
 			return url.Parse(raw)
 		}
@@ -153,14 +169,25 @@ func (t *transport) connect(ctx context.Context, u, proxyURL *url.URL) error {
 	t.Close()
 	seconds, _ := strconv.ParseFloat(t.options.value("timeout"), 64)
 	timeout := time.Duration(seconds * float64(time.Second))
-	dialer := &net.Dialer{Timeout: timeout}
+	dialer := &idleDialer{Dialer: net.Dialer{Timeout: timeout}}
 	destination := address(u)
 	if proxyURL != nil {
 		destination = address(proxyURL)
 	}
 	var conn net.Conn
 	var err error
-	if proxyURL != nil && strings.HasPrefix(proxyURL.Scheme, "socks") {
+	if proxyURL != nil && (proxyURL.Scheme == "socks4" || proxyURL.Scheme == "socks4a") {
+		conn, err = dialer.DialContext(ctx, "tcp", destination)
+		if err == nil {
+			connection := conn
+			stop := context.AfterFunc(ctx, func() { connection.Close() })
+			err = socks4Connect(ctx, conn, u, proxyURL)
+			stop()
+			if err != nil {
+				conn.Close()
+			}
+		}
+	} else if proxyURL != nil && strings.HasPrefix(proxyURL.Scheme, "socks") {
 		var auth *proxy.Auth
 		if proxyURL.User != nil {
 			pass, _ := proxyURL.User.Password()
@@ -186,7 +213,6 @@ func (t *transport) connect(ctx context.Context, u, proxyURL *url.URL) error {
 	if err != nil {
 		return err
 	}
-	conn = &idleConn{Conn: conn, timeout: timeout}
 	closeOnError := func(err error) error { conn.Close(); return err }
 	if proxyURL != nil && proxyURL.Scheme == "https" {
 		secured, err := t.tls.connect(ctx, conn, proxyURL.Hostname())
@@ -229,6 +255,13 @@ func (t *transport) send(ctx context.Context, r *request) (*http.Response, []hea
 	p, err := t.proxyFor(r.URL)
 	if err != nil {
 		return nil, nil, err
+	}
+	if p != nil {
+		switch p.Scheme {
+		case "http", "https", "socks4", "socks4a", "socks5", "socks5h":
+		default:
+			return nil, nil, fmt.Errorf("unsupported proxy scheme: %s", p.Scheme)
+		}
 	}
 	if err = t.connect(ctx, r.URL, p); err != nil {
 		return nil, nil, err
@@ -341,4 +374,45 @@ func (t *transport) send(ctx context.Context, r *request) (*http.Response, []hea
 		}
 		return response, headers, nil
 	}
+}
+
+func socks4Connect(ctx context.Context, conn net.Conn, target, server *url.URL) error {
+	host := target.Hostname()
+	ip := net.ParseIP(host).To4()
+	remoteDNS := ip == nil && server.Scheme == "socks4a"
+	if remoteDNS {
+		ip = net.IPv4(0, 0, 0, 1).To4()
+	}
+	if ip == nil {
+		addresses, err := net.DefaultResolver.LookupIP(ctx, "ip4", host)
+		if err != nil {
+			return err
+		}
+		if len(addresses) == 0 {
+			return fmt.Errorf("SOCKS4 requires an IPv4 destination")
+		}
+		ip = addresses[0].To4()
+	}
+	_, portText, _ := net.SplitHostPort(address(target))
+	port, _ := strconv.Atoi(portText)
+	packet := []byte{4, 1, byte(port >> 8), byte(port)}
+	packet = append(packet, ip...)
+	if server.User != nil {
+		packet = append(packet, server.User.Username()...)
+	}
+	packet = append(packet, 0)
+	if remoteDNS {
+		packet = append(append(packet, host...), 0)
+	}
+	if _, err := conn.Write(packet); err != nil {
+		return err
+	}
+	reply := make([]byte, 8)
+	if _, err := io.ReadFull(conn, reply); err != nil {
+		return err
+	}
+	if reply[1] != 90 {
+		return fmt.Errorf("SOCKS4 connection rejected: %d", reply[1])
+	}
+	return nil
 }

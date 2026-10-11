@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -18,9 +19,10 @@ type field struct {
 type object []field
 
 func decodeJSON(data []byte) (any, error) {
+	data, constants := jsonConstants(data)
 	d := json.NewDecoder(bytes.NewReader(data))
 	d.UseNumber()
-	v, err := jsonValue(d)
+	v, err := jsonValue(d, constants)
 	if err != nil {
 		return nil, err
 	}
@@ -29,7 +31,7 @@ func decodeJSON(data []byte) (any, error) {
 	}
 	return v, nil
 }
-func jsonValue(d *json.Decoder) (any, error) {
+func jsonValue(d *json.Decoder, constants map[int64]json.Number) (any, error) {
 	t, err := d.Token()
 	if err != nil {
 		return nil, err
@@ -42,7 +44,7 @@ func jsonValue(d *json.Decoder) (any, error) {
 			if e != nil {
 				return nil, e
 			}
-			v, e := jsonValue(d)
+			v, e := jsonValue(d, constants)
 			if e != nil {
 				return nil, e
 			}
@@ -53,7 +55,7 @@ func jsonValue(d *json.Decoder) (any, error) {
 	case json.Delim('['):
 		a := []any{}
 		for d.More() {
-			v, e := jsonValue(d)
+			v, e := jsonValue(d, constants)
 			if e != nil {
 				return nil, e
 			}
@@ -62,6 +64,12 @@ func jsonValue(d *json.Decoder) (any, error) {
 		_, err = d.Token()
 		return a, err
 	default:
+		if value, ok := constants[d.InputOffset()]; ok {
+			return value, nil
+		}
+		if n, ok := t.(json.Number); ok {
+			return pythonNumber(n), nil
+		}
 		return t, nil
 	}
 }
@@ -105,6 +113,13 @@ func jsonText(v any, indent int, sorted, ascii bool) []byte {
 			if sorted {
 				sort.SliceStable(fields, func(i, j int) bool {
 					if fields[i].key == fields[j].key {
+						left, lok := fields[i].value.(json.Number)
+						right, rok := fields[j].value.(json.Number)
+						if lok && rok {
+							a, _ := left.Float64()
+							b, _ := right.Float64()
+							return a < b
+						}
 						return string(jsonText(fields[i].value, -1, true, false)) < string(jsonText(fields[j].value, -1, true, false))
 					}
 					return fields[i].key < fields[j].key
@@ -202,6 +217,11 @@ func jsonPath(raw string) ([]pathPart, error) {
 			pos++
 		}
 		p := pathPart{key: key.String(), index: -1}
+		if escapedNumber {
+			if _, err := strconv.Atoi(p.key); err != nil {
+				p.key = "\\" + p.key
+			}
+		}
 		if bracket && !escapedNumber {
 			if p.key == "" {
 				p.array = true
@@ -238,9 +258,6 @@ func setJSON(node any, path []pathPart, value any) (any, error) {
 		if i < 0 {
 			i = len(a)
 		}
-		if i > 10000000 {
-			return nil, fmt.Errorf("array index is too large: %d", i)
-		}
 		for len(a) <= i {
 			a = append(a, nil)
 		}
@@ -274,4 +291,69 @@ func setJSON(node any, path []pathPart, value any) (any, error) {
 		return nil, err
 	}
 	return append(o, field{p.key, v}), nil
+}
+
+func pythonNumber(number json.Number) json.Number {
+	text := string(number)
+	if !strings.ContainsAny(text, ".eE") {
+		if text == "-0" {
+			return "0"
+		}
+		return number
+	}
+	value, _ := strconv.ParseFloat(text, 64)
+	if math.IsInf(value, 1) {
+		return "Infinity"
+	}
+	if math.IsInf(value, -1) {
+		return "-Infinity"
+	}
+	format := byte('f')
+	if absolute := math.Abs(value); absolute != 0 && (absolute < 1e-4 || absolute >= 1e16) {
+		format = 'e'
+	}
+	text = strconv.FormatFloat(value, format, -1, 64)
+	if !strings.ContainsAny(text, ".e") {
+		text += ".0"
+	}
+	return json.Number(text)
+}
+
+func jsonConstants(data []byte) ([]byte, map[int64]json.Number) {
+	var constants map[int64]json.Number
+	quoted := false
+	for i := 0; i < len(data); i++ {
+		if quoted {
+			if data[i] == '\\' {
+				i++
+			} else if data[i] == '"' {
+				quoted = false
+			}
+			continue
+		}
+		if data[i] == '"' {
+			quoted = true
+			continue
+		}
+		if data[i] != 'N' && data[i] != 'I' && data[i] != '-' {
+			continue
+		}
+		for _, name := range []string{"NaN", "Infinity", "-Infinity"} {
+			if !bytes.HasPrefix(data[i:], []byte(name)) {
+				continue
+			}
+			if constants == nil {
+				data = bytes.Clone(data)
+				constants = make(map[int64]json.Number)
+			}
+			constants[int64(i+1)] = json.Number(name)
+			data[i] = '0'
+			for j := 1; j < len(name); j++ {
+				data[i+j] = ' '
+			}
+			i += len(name) - 1
+			break
+		}
+	}
+	return data, constants
 }

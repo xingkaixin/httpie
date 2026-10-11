@@ -1,77 +1,18 @@
 package cli
 
 import (
-	"bytes"
 	"compress/zlib"
 	"fmt"
 	"io"
-	"mime"
-	"mime/multipart"
 	"net/http"
-	"net/textproto"
 	"net/url"
 	"os"
-	"path"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
+
+	"golang.org/x/net/idna"
 )
-
-type bodyPart struct {
-	data []byte
-	path string
-}
-type bodySource []bodyPart
-
-type bodyReader struct {
-	io.Reader
-	files []*os.File
-}
-
-func (r *bodyReader) Close() error {
-	var result error
-	for _, f := range r.files {
-		if err := f.Close(); err != nil {
-			result = err
-		}
-	}
-	return result
-}
-func (b bodySource) open() (io.ReadCloser, error) {
-	r := &bodyReader{}
-	var readers []io.Reader
-	for _, p := range b {
-		if p.path != "" {
-			f, err := os.Open(p.path)
-			if err != nil {
-				r.Close()
-				return nil, err
-			}
-			r.files = append(r.files, f)
-			readers = append(readers, f)
-		} else {
-			readers = append(readers, bytes.NewReader(p.data))
-		}
-	}
-	r.Reader = io.MultiReader(readers...)
-	return r, nil
-}
-func (b bodySource) size() (int64, error) {
-	var n int64
-	for _, p := range b {
-		if p.path == "" {
-			n += int64(len(p.data))
-		} else {
-			s, err := os.Stat(p.path)
-			if err != nil {
-				return 0, err
-			}
-			n += s.Size()
-		}
-	}
-	return n, nil
-}
 
 type header struct {
 	Name  string `json:"name"`
@@ -146,16 +87,30 @@ func buildRequest(o options, program string, stdin io.Reader, stdinTTY bool) (*r
 	if u.Scheme != "http" && u.Scheme != "https" {
 		return fail(fmt.Errorf("unsupported URL scheme: %s", u.Scheme))
 	}
+	if !strings.Contains(u.Hostname(), ":") {
+		host, err := idna.Lookup.ToASCII(u.Hostname())
+		if err != nil {
+			return fail(err)
+		}
+		if u.Port() != "" {
+			host += ":" + u.Port()
+		}
+		u.Host = host
+	}
+	u.RawQuery = quoteURI(u.RawQuery)
 	if u.Path == "" {
 		u.Path = "/"
 	}
 	if !o.has("path-as-is") {
-		trailing := strings.HasSuffix(u.Path, "/") || strings.HasSuffix(u.Path, "/.") || strings.HasSuffix(u.Path, "/..")
-		u.Path = path.Clean(u.Path)
-		if trailing && u.Path != "/" {
-			u.Path += "/"
+		escaped := u.EscapedPath()
+		trailing := strings.HasSuffix(escaped, "/") || strings.HasSuffix(escaped, "/.") || strings.HasSuffix(escaped, "/..")
+		escaped = removeDotSegments(escaped)
+		if trailing && !strings.HasSuffix(escaped, "/") {
+			escaped += "/"
 		}
-		u.RawPath = ""
+		escaped = quoteURI(escaped)
+		u.Path, _ = url.PathUnescape(escaped)
+		u.RawPath = escaped
 	}
 	var data any
 	var fields []item
@@ -182,6 +137,9 @@ func buildRequest(o options, program string, stdin io.Reader, stdinTTY bool) (*r
 		}
 		switch it.sep {
 		case ":", ";":
+			if it.key == "" || strings.ContainsAny(it.key, ":\r\n") || strings.ContainsAny(it.key[:1], " \t\v\f") || strings.ContainsAny(it.value, "\r\n") {
+				return fail(fmt.Errorf("invalid HTTP header: %s", it.key))
+			}
 			if it.sep == ";" && it.value != "" {
 				return fail(fmt.Errorf("to specify an empty header use Header;"))
 			}
@@ -212,7 +170,7 @@ func buildRequest(o options, program string, stdin io.Reader, stdinTTY bool) (*r
 			filename, _, _ := strings.Cut(it.value, ";type=")
 			filename = expandPath(filename)
 			body = bodySource{{path: filename}}
-			if ct := mime.TypeByExtension(filepath.Ext(filename)); ct != "" {
+			if ct := fileMIME(filename); ct != "" {
 				custom = append(custom, header{"Content-Type", ct})
 			}
 		case "=", ":=":
@@ -238,6 +196,15 @@ func buildRequest(o options, program string, stdin io.Reader, stdinTTY bool) (*r
 					return fail(fmt.Errorf("cannot use complex JSON value types with --form/--multipart"))
 				default:
 					it.value = fmt.Sprint(v)
+					if it.value == "NaN" {
+						it.value = "nan"
+					}
+					if it.value == "Infinity" {
+						it.value = "inf"
+					}
+					if it.value == "-Infinity" {
+						it.value = "-inf"
+					}
 				}
 				fields = append(fields, it)
 				continue
@@ -282,7 +249,7 @@ func buildRequest(o options, program string, stdin io.Reader, stdinTTY bool) (*r
 		}
 	}
 	contentType := ""
-	jsonMode := o.value("request-type") == "json" || (!form && data != nil)
+	jsonMode := o.value("request-type") == "json" || (!form && (data != nil || fromStdin || fileCount > 0 || o.value("raw") != ""))
 	if data != nil {
 		body = bodySource{{data: jsonText(data, -1, false, true)}}
 	}
@@ -352,6 +319,7 @@ func buildRequest(o options, program string, stdin io.Reader, stdinTTY bool) (*r
 		return fail(err)
 	}
 	req.GetBody = body.open
+	req.URL = u
 	req.ContentLength = size
 	r := &request{Request: req, removed: removed}
 	r.setHeader("Accept-Encoding", "gzip, deflate, br")
@@ -383,7 +351,9 @@ func buildRequest(o options, program string, stdin io.Reader, stdinTTY bool) (*r
 		r.setHeader("Content-Length", strconv.FormatInt(size, 10))
 	}
 	if o.has("chunked") {
-		r.removed["content-length"] = true
+		if !o.has("offline") {
+			r.removed["content-length"] = true
+		}
 		r.ContentLength = -1
 		r.TransferEncoding = []string{"chunked"}
 		r.setHeader("Transfer-Encoding", "chunked")
@@ -407,45 +377,46 @@ func buildRequest(o options, program string, stdin io.Reader, stdinTTY bool) (*r
 	return r, cleanup, nil
 }
 
-func multipartBody(fields []item, boundary string) (bodySource, string, error) {
-	var b bytes.Buffer
-	w := multipart.NewWriter(&b)
-	if boundary != "" {
-		if err := w.SetBoundary(boundary); err != nil {
-			return nil, "", err
+func removeDotSegments(path string) string {
+	var parts []string
+	for _, part := range strings.Split(path, "/") {
+		switch part {
+		case ".":
+		case "..":
+			if len(parts) > 1 {
+				parts = parts[:len(parts)-1]
+			}
+		default:
+			parts = append(parts, part)
 		}
 	}
-	var body bodySource
-	for _, it := range fields {
-		h := textproto.MIMEHeader{}
-		if it.sep == "@" {
-			filename, ct, _ := strings.Cut(it.value, ";type=")
-			filename = expandPath(filename)
-			if ct == "" {
-				ct = mime.TypeByExtension(filepath.Ext(filename))
+	result := strings.Join(parts, "/")
+	if result == "" {
+		return "/"
+	}
+	return result
+}
+
+func quoteURI(value string) string {
+	var out strings.Builder
+	for i := 0; i < len(value); i++ {
+		c := value[i]
+		if c == '%' && i+2 < len(value) {
+			if n, err := strconv.ParseUint(value[i+1:i+3], 16, 8); err == nil {
+				if strings.ContainsRune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~", rune(n)) {
+					out.WriteByte(byte(n))
+				} else {
+					out.WriteString(strings.ToUpper(value[i : i+3]))
+				}
+				i += 2
+				continue
 			}
-			if ct == "" {
-				ct = "application/octet-stream"
-			}
-			h.Set("Content-Disposition", mime.FormatMediaType("form-data", map[string]string{"name": it.key, "filename": filepath.Base(filename)}))
-			h.Set("Content-Type", ct)
-			if _, err := w.CreatePart(h); err != nil {
-				return nil, "", err
-			}
-			body = append(body, bodyPart{data: bytes.Clone(b.Bytes())}, bodyPart{path: filename})
-			b.Reset()
+		}
+		if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || strings.ContainsRune("!#$&'()*+,-./:;=?@[]_~", rune(c)) {
+			out.WriteByte(c)
 		} else {
-			h.Set("Content-Disposition", mime.FormatMediaType("form-data", map[string]string{"name": it.key}))
-			part, err := w.CreatePart(h)
-			if err != nil {
-				return nil, "", err
-			}
-			_, _ = io.WriteString(part, it.value)
+			fmt.Fprintf(&out, "%%%02X", c)
 		}
 	}
-	if err := w.Close(); err != nil {
-		return nil, "", err
-	}
-	body = append(body, bodyPart{data: bytes.Clone(b.Bytes())})
-	return body, w.FormDataContentType(), nil
+	return out.String()
 }

@@ -206,6 +206,9 @@ func parseOptions(args []string) (options, error) {
 			}
 		}
 		o.values[dest] = append(o.values[dest], value)
+		if spec.name == "help" || spec.name == "manual" || spec.name == "version" {
+			return o, nil
+		}
 	}
 	for _, dest := range resets {
 		delete(o.values, dest)

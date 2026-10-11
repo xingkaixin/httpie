@@ -77,7 +77,7 @@ static httpie_ssl *httpie_connection(SSL_CTX *ctx, const char *host, int is_ip) 
     }
     SSL_set_bio(connection->ssl, input, output);
     SSL_set_connect_state(connection->ssl);
-    SSL_set_tlsext_host_name(connection->ssl, host);
+    if (!is_ip) SSL_set_tlsext_host_name(connection->ssl, host);
     if (is_ip) X509_VERIFY_PARAM_set1_ip_asc(SSL_get0_param(connection->ssl), host);
     else X509_VERIFY_PARAM_set1_host(SSL_get0_param(connection->ssl), host, 0);
     return connection;
@@ -228,6 +228,7 @@ func (s *tlsSettings) connect(ctx context.Context, conn net.Conn, host string) (
 	if err := s.configure(); err != nil {
 		return nil, err
 	}
+	host = strings.TrimSuffix(host, ".")
 	hostname := C.CString(host)
 	defer C.free(unsafe.Pointer(hostname))
 	isIP := 0

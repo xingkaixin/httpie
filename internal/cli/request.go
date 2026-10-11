@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -123,7 +124,7 @@ func buildRequest(o options, program string, stdin io.Reader, stdinTTY bool) (*r
 		u.RawPath = escaped
 	}
 	var data any
-	var fields []item
+	var fields, query []item
 	var custom []header
 	removed := map[string]bool{}
 	var body bodySource
@@ -156,17 +157,16 @@ func buildRequest(o options, program string, stdin io.Reader, stdinTTY bool) (*r
 			key := strings.ToLower(it.key)
 			if it.value == "" && it.sep == ":" {
 				removed[key] = true
+				custom = slices.DeleteFunc(custom, func(h header) bool { return strings.EqualFold(h.Name, it.key) })
 				continue
 			}
 			if strings.ContainsAny(it.key+it.value, "\r\n") {
 				return fail(fmt.Errorf("invalid newline in header"))
 			}
+			delete(removed, key)
 			custom = append(custom, header{it.key, strings.TrimSpace(it.value)})
 		case "==":
-			if u.RawQuery != "" {
-				u.RawQuery += "&"
-			}
-			u.RawQuery += url.QueryEscape(it.key) + "=" + url.QueryEscape(it.value)
+			query = append(query, it)
 		case "@":
 			hasData = true
 			fileCount++
@@ -229,6 +229,13 @@ func buildRequest(o options, program string, stdin io.Reader, stdinTTY bool) (*r
 			}
 		}
 	}
+	for _, it := range groupItems(query) {
+		if u.RawQuery != "" {
+			u.RawQuery += "&"
+		}
+		u.RawQuery += url.QueryEscape(it.key) + "=" + url.QueryEscape(it.value)
+	}
+	fields = groupItems(fields)
 	fromStdin := !stdinTTY && !o.has("ignore-stdin")
 	if (fromStdin && o.has("raw")) || ((fromStdin || o.has("raw") || fileCount > 0 && !form) && data != nil) || ((fromStdin || o.has("raw")) && (fileCount > 0 || len(fields) > 0)) {
 		return fail(fmt.Errorf("request body (from stdin, --raw or a file) and request data (key=value) cannot be mixed; pass --ignore-stdin"))
@@ -272,6 +279,17 @@ func buildRequest(o options, program string, stdin io.Reader, stdinTTY bool) (*r
 			body, contentType, err = multipartBody(fields, o.value("boundary"))
 			if err != nil {
 				return fail(err)
+			}
+			delete(removed, "content-type")
+			for i := range custom {
+				if strings.EqualFold(custom[i].Name, "Content-Type") && !strings.Contains(custom[i].Value, "boundary=") {
+					if custom[i].Value == "" {
+						custom[i].Value = contentType
+					} else {
+						_, boundary, _ := strings.Cut(contentType, "boundary=")
+						custom[i].Value += "; boundary=" + boundary
+					}
+				}
 			}
 		} else if len(fields) > 0 {
 			var pairs []string

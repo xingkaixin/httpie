@@ -206,6 +206,14 @@ def main():
                   ['a[0]=x', 'a[]=y'], ['[]=one', '[]=two']]:
         for flags in [[], ['--pretty=format'], ['--pretty=format', '--unsorted']]:
             add('offline items ' + str(items) + str(flags), ['-I', '--offline', *flags, 'example.org', *items])
+    for items in [[r'a=b\=c', r'x==q\=2'], [r'path=c:\\windows', r'esc\\:header'],
+                  ['X-Test:one', 'X-Test:', 'X-Test:two'], ['X-Test:one', 'X-Other:yes', 'X-Test:'],
+                  ['a==1', 'b==2', 'a==3'], ['a=1', 'b=2', 'a=3']]:
+        for flags in [[], ['-f']]:
+            add('request item edge ' + repr((flags, items)), ['-I', '--offline', *flags, 'example.org', *items])
+    for content_type in ['multipart/magic', 'multipart/magic; boundary=HEADER_BOUNDARY', '']:
+        add('multipart content type ' + content_type, ['-I', '--offline', '--multipart', '--boundary=BODY_BOUNDARY',
+            'example.org', 'a=1', 'b=2', 'a=3', 'Content-Type:' + content_type])
     for number in ['1e3', '1e16', '1e-5', '1.23456789123456789', '-0.0', '-0', 'NaN', 'Infinity', '-Infinity', '1e999']:
         for flags in [[], ['--pretty=format'], ['-f']]:
             add('JSON number ' + number + str(flags), ['-I', '--offline', *flags, 'example.org', 'n:=' + number])

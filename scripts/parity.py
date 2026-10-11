@@ -60,7 +60,10 @@ class Server(http.server.BaseHTTPRequestHandler):
             'body': body.decode('utf-8', errors='replace')
         }, sort_keys=True).encode()
         if self.path in self.responses:
-            payload, content_type, headers = self.responses[self.path]
+            response = self.responses[self.path]
+            payload, content_type, headers = response[:3]
+            if len(response) > 3:
+                status = response[3]
         elif self.path.startswith('/status/'):
             status = int(self.path.split('/')[-1])
             payload = b'status'
@@ -170,8 +173,8 @@ def main():
     url = f'http://127.0.0.1:{server.server_port}'
     cases = []
 
-    def add(name, args, stdin=None, terminal=False):
-        cases.append((name, args, stdin, terminal))
+    def add(name, args, stdin=None, terminal=False, env=None):
+        cases.append((name, args, stdin, terminal, env or {}))
 
     add('version', ['--version'])
     add('help', ['--help'])
@@ -293,6 +296,20 @@ def main():
     add('redirect deleted Host', ['-I', '-F', '-pH', url + '/redirect/302', 'Host:'])
     add('redirect limit without follow', ['-I', '--max-redirects=1', url + '/redirect/302'])
     add('failed connection request output', ['-I', '-v', '--timeout=.2', 'http://127.0.0.1:1'])
+    dead_proxy = 'http://127.0.0.1:1'
+    for label, flags, environment in [
+        ('lowercase wins', [], {'HTTP_PROXY': url, 'http_proxy': dead_proxy}),
+        ('empty lowercase disables uppercase', [], {'HTTP_PROXY': dead_proxy, 'http_proxy': ''}),
+        ('CGI ignores uppercase HTTP_PROXY', [], {'HTTP_PROXY': dead_proxy, 'REQUEST_METHOD': 'GET'}),
+        ('scheme before all', ['--proxy=http:' + url, '--proxy=all:' + dead_proxy], {}),
+        ('environment scheme before explicit all', ['--proxy=all:' + dead_proxy], {'http_proxy': url}),
+        ('host before scheme', ['--proxy=http\\://127.0.0.1:' + url, '--proxy=http:' + dead_proxy], {}),
+        ('NO_PROXY domain', [], {'http_proxy': dead_proxy, 'no_proxy': '127.0.0.1'}),
+        ('NO_PROXY IPv4 with port', [], {'http_proxy': dead_proxy, 'no_proxy': '127.0.0.1:' + str(server.server_port)}),
+        ('NO_PROXY CIDR', [], {'http_proxy': dead_proxy, 'no_proxy': '127.0.0.0/8'}),
+        ('explicit proxy ignores NO_PROXY', ['--proxy=http:' + dead_proxy], {'no_proxy': '*'}),
+    ]:
+        add('proxy precedence ' + label, ['-I', '--timeout=.5', *flags, url + '/echo'], env=environment)
     add('folded response headers', ['-I', '-h', url + '/folded'])
     add('folded header count exact', ['-I', '--max-headers=4', url + '/folded'])
     add('folded header count too small', ['-I', '--max-headers=3', url + '/folded'])
@@ -331,9 +348,10 @@ def main():
                             add(f'upstream nested JSON {index}', ['-I', url + '/echo', *inputs])
         failures = []
         selected = [case for case in cases if os.getenv('PARITY_FILTER', '') in case[0]]
-        for name, args, stdin, terminal in selected:
+        for name, args, stdin, terminal, overrides in selected:
             outputs = []
             case_env = dict(env, TERM='xterm-256color') if name.startswith('color ') or terminal else env
+            case_env = dict(case_env, **overrides)
             for binary in [REFERENCE, GO]:
                 outputs.append(invoke(binary, args, stdin, case_env, terminal))
             if outputs[0] != outputs[1]:

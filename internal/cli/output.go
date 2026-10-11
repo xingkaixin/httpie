@@ -111,7 +111,7 @@ func (o *output) writeRequest(r *request, selection string) error {
 			return err
 		}
 	}
-	if strings.Contains(selection, "B") {
+	if strings.Contains(selection, "B") && !r.streamedBody {
 		body, err := r.GetBody()
 		if err != nil {
 			return err
@@ -354,4 +354,21 @@ func (o *output) writeBody(reader io.Reader, contentType string, response, heade
 func validMIME(media string) bool {
 	kind, subtype, ok := strings.Cut(media, "/")
 	return ok && kind != "" && subtype != "" && !strings.Contains(subtype, "/")
+}
+
+type displayedUpload struct {
+	io.ReadCloser
+	output      *output
+	contentType string
+	headers     bool
+}
+
+func (r *displayedUpload) Read(data []byte) (int, error) {
+	n, err := r.ReadCloser.Read(data)
+	if n > 0 {
+		if writeErr := r.output.writeBody(bytes.NewReader(data[:n]), r.contentType, false, r.headers); writeErr != nil {
+			return n, writeErr
+		}
+	}
+	return n, err
 }

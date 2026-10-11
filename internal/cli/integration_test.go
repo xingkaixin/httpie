@@ -270,3 +270,44 @@ func TestProxyAndHeaderLimit(t *testing.T) {
 		t.Fatalf("header limit exit=%d", code)
 	}
 }
+
+func TestChunkedStdinStartsBeforeEOF(t *testing.T) {
+	isolatedCLI(t)
+	received := make(chan string, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		first := make([]byte, len("first\n"))
+		_, err := io.ReadFull(r.Body, first)
+		if err == nil {
+			received <- string(first)
+		}
+		rest, _ := io.ReadAll(r.Body)
+		_, _ = w.Write(append(first, rest...))
+	}))
+	defer server.Close()
+	reader, writer := io.Pipe()
+	defer reader.Close()
+	defer writer.Close()
+	done := make(chan error, 1)
+	go func() {
+		var output bytes.Buffer
+		code, err := run("http", []string{"--chunked", "--timeout=2", "-pb", server.URL}, reader, &output, io.Discard, false, false, false)
+		if err == nil && (code != 0 || output.String() != "first\nlast\n") {
+			err = fmt.Errorf("code=%d output=%q", code, output.String())
+		}
+		done <- err
+	}()
+	_, _ = io.WriteString(writer, "first\n")
+	select {
+	case data := <-received:
+		if data != "first\n" {
+			t.Errorf("first chunk = %q", data)
+		}
+	case <-time.After(time.Second):
+		t.Error("the server received no data before stdin EOF")
+	}
+	_, _ = io.WriteString(writer, "last\n")
+	writer.Close()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}

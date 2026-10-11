@@ -173,6 +173,12 @@ func run(program string, args []string, stdin io.Reader, stdout, stderr io.Write
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
+	stopInput := context.AfterFunc(ctx, func() {
+		if closer, ok := stdin.(io.Closer); ok {
+			_ = closer.Close()
+		}
+	})
+	defer stopInput()
 	code, err = exchange(ctx, transport, req, s, auth, out, stdout, stderr, stdoutTTY, resume)
 	if ctx.Err() != nil {
 		return 130, nil
@@ -217,10 +223,20 @@ func exchange(ctx context.Context, t *transport, r *request, s *session, auth au
 			}
 			previousBody = strings.Contains(selection, "B")
 		}
+		if r.streamedBody && strings.Contains(selection, "B") && r.Body != nil {
+			r.Body = &displayedUpload{ReadCloser: r.Body, output: out, contentType: r.Header.Get("Content-Type"), headers: strings.Contains(selection, "H")}
+		}
 		start := time.Now()
 		response, headers, err := t.send(ctx, r)
 		if err != nil {
 			return 1, err
+		}
+		if r.streamedBody && strings.Contains(selection, "B") && out.tty {
+			if _, err = io.WriteString(out.writer, "\n\n"); err != nil {
+				t.Close()
+				response.Body.Close()
+				return 1, err
+			}
 		}
 		s.receiveCookies(response.Cookies(), r.URL)
 		redirect := response.Header.Get("Location") != "" && (response.StatusCode == 301 || response.StatusCode == 302 || response.StatusCode == 303 || response.StatusCode == 307 || response.StatusCode == 308)
@@ -314,6 +330,8 @@ func exchange(ctx context.Context, t *transport, r *request, s *session, auth au
 			}
 			if status != 307 && status != 308 {
 				r.Body = nil
+				r.streamedBody = false
+				r.liveInput = false
 				r.GetBody = func() (io.ReadCloser, error) { return io.NopCloser(strings.NewReader("")), nil }
 				r.ContentLength = 0
 				r.TransferEncoding = nil

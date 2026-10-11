@@ -21,9 +21,11 @@ type header struct {
 }
 type request struct {
 	*http.Request
-	headers     []header
-	removed     map[string]bool
-	defaultHost bool
+	headers      []header
+	removed      map[string]bool
+	defaultHost  bool
+	streamedBody bool
+	liveInput    bool
 }
 
 func (r *request) setHeader(name, value string) {
@@ -240,7 +242,10 @@ func buildRequest(o options, program string, stdin io.Reader, stdinTTY bool) (*r
 	if (fromStdin && o.has("raw")) || ((fromStdin || o.has("raw") || fileCount > 0 && !form) && data != nil) || ((fromStdin || o.has("raw")) && (fileCount > 0 || len(fields) > 0)) {
 		return fail(fmt.Errorf("request body (from stdin, --raw or a file) and request data (key=value) cannot be mixed; pass --ignore-stdin"))
 	}
-	if fromStdin {
+	var liveInput io.Reader
+	if fromStdin && !o.has("offline") && o.has("chunked") {
+		liveInput = stdin
+	} else if fromStdin {
 		f, err := os.CreateTemp("", "httpie-stdin-*")
 		if err != nil {
 			return fail(err)
@@ -346,7 +351,12 @@ func buildRequest(o options, program string, stdin io.Reader, stdinTTY bool) (*r
 		}
 		return fail(err)
 	}
-	req.GetBody = body.open
+	if liveInput != nil {
+		req.Body = io.NopCloser(liveInput)
+		req.GetBody = func() (io.ReadCloser, error) { return io.NopCloser(liveInput), nil }
+	} else {
+		req.GetBody = body.open
+	}
 	req.URL = u
 	req.ContentLength = size
 	r := &request{Request: req, removed: removed}
@@ -403,6 +413,8 @@ func buildRequest(o options, program string, stdin io.Reader, stdinTTY bool) (*r
 		}
 	}
 	r.defaultHost = !seen["host"] && !removed["host"]
+	r.liveInput = liveInput != nil
+	r.streamedBody = !o.has("offline") && !compressed && (r.liveInput || fileCount > 0 || form && o.value("request-type") == "multipart" || o.has("chunked"))
 	return r, cleanup, nil
 }
 

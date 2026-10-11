@@ -16,7 +16,6 @@ import (
 	"strings"
 	"time"
 
-	"golang.org/x/net/http/httpproxy"
 	"golang.org/x/net/proxy"
 )
 
@@ -79,12 +78,37 @@ func newTransport(o options) (*transport, error) {
 	return &transport{options: o, tls: config}, nil
 }
 func (t *transport) proxyFor(u *url.URL) (*url.URL, error) {
-	for i := len(t.options.values["proxy"]) - 1; i >= 0; i-- {
-		scheme, raw, ok := strings.Cut(t.options.values["proxy"][i], ":")
+	proxies := map[string]string{}
+	for _, value := range t.options.values["proxy"] {
+		key, value, ok := splitCredentials(value)
 		if !ok {
 			return nil, fmt.Errorf("invalid proxy specification")
 		}
-		if scheme == u.Scheme || scheme == "all" {
+		proxies[key] = value
+	}
+	noProxy := os.Getenv("no_proxy")
+	if noProxy == "" {
+		noProxy = os.Getenv("NO_PROXY")
+	}
+	if value, ok := proxies["no_proxy"]; ok {
+		noProxy = value
+	}
+	if !bypassProxy(u, noProxy) {
+		for _, key := range []string{"http", "https", "all"} {
+			if _, exists := proxies[key]; exists {
+				continue
+			}
+			value, lower := os.LookupEnv(key + "_proxy")
+			if !lower && (key != "http" || os.Getenv("REQUEST_METHOD") == "") {
+				value = os.Getenv(strings.ToUpper(key) + "_PROXY")
+			}
+			if value != "" {
+				proxies[key] = value
+			}
+		}
+	}
+	for _, key := range []string{u.Scheme + "://" + u.Hostname(), u.Scheme, "all://" + u.Hostname(), "all"} {
+		if raw, ok := proxies[key]; ok {
 			if raw == "" {
 				return nil, nil
 			}
@@ -94,55 +118,32 @@ func (t *transport) proxyFor(u *url.URL) (*url.URL, error) {
 			return url.Parse(raw)
 		}
 	}
-	env := httpproxy.FromEnvironment()
-	if env.HTTPProxy == "" {
-		env.HTTPProxy = os.Getenv("ALL_PROXY")
-		if env.HTTPProxy == "" {
-			env.HTTPProxy = os.Getenv("all_proxy")
-		}
-	}
-	if env.HTTPSProxy == "" {
-		env.HTTPSProxy = os.Getenv("ALL_PROXY")
-		if env.HTTPSProxy == "" {
-			env.HTTPSProxy = os.Getenv("all_proxy")
-		}
-	}
-	if bypassProxy(u, env.NoProxy) {
-		return nil, nil
-	}
-	raw := env.HTTPProxy
-	if u.Scheme == "https" {
-		raw = env.HTTPSProxy
-	}
-	if raw == "" {
-		return nil, nil
-	}
-	if !strings.Contains(raw, "://") {
-		raw = "http://" + raw
-	}
-	return url.Parse(raw)
+	return nil, nil
 }
 
 func bypassProxy(u *url.URL, rules string) bool {
 	host := strings.ToLower(u.Hostname())
-	for _, rule := range strings.Split(rules, ",") {
-		rule = strings.ToLower(strings.TrimSpace(rule))
+	ip := net.ParseIP(host)
+	hostWithPort := host
+	if u.Port() != "" {
+		hostWithPort += ":" + u.Port()
+	}
+	for _, rule := range strings.Split(strings.ReplaceAll(rules, " ", ""), ",") {
+		rule = strings.ToLower(rule)
 		if rule == "*" {
-			return true
-		}
-		if _, network, err := net.ParseCIDR(rule); err == nil && network.Contains(net.ParseIP(host)) {
 			return true
 		}
 		if rule == "" {
 			continue
 		}
-		if strings.Contains(rule, ":") {
-			if rule == strings.ToLower(u.Host) {
+		if ip.To4() != nil {
+			if _, network, err := net.ParseCIDR(rule); err == nil && network.IP.To4() != nil && network.Contains(ip) || host == rule {
 				return true
 			}
 			continue
 		}
-		if host == strings.TrimPrefix(rule, ".") || strings.HasSuffix(host, "."+strings.TrimPrefix(rule, ".")) {
+		rule = strings.TrimLeft(rule, ".")
+		if host == rule || hostWithPort == rule || strings.HasSuffix(host, "."+rule) || strings.HasSuffix(hostWithPort, "."+rule) {
 			return true
 		}
 	}
@@ -294,6 +295,11 @@ func (t *transport) send(ctx context.Context, r *request) (*http.Response, []hea
 	if _, err = io.WriteString(w, "\r\n"); err != nil {
 		return nil, nil, err
 	}
+	if r.liveInput {
+		if err = w.Flush(); err != nil {
+			return nil, nil, err
+		}
+	}
 	if r.Body != nil {
 		if len(r.TransferEncoding) > 0 && r.TransferEncoding[0] == "chunked" {
 			buf := make([]byte, 32*1024)
@@ -305,6 +311,9 @@ func (t *transport) send(ctx context.Context, r *request) (*http.Response, []hea
 					}
 					if err == nil {
 						_, err = io.WriteString(w, "\r\n")
+					}
+					if err == nil && r.liveInput {
+						err = w.Flush()
 					}
 					if err != nil {
 						break

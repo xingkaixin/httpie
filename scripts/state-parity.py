@@ -130,6 +130,14 @@ def main():
             for words in [['cli', 'export-args'], ['cli', 'export-args', '--help'], ['cli', 'check-updates', '--help'],
                           ['cli', 'sessions', '--help'], ['cli', 'sessions', 'upgrade', '--help'], ['cli', 'sessions', 'upgrade-all', '--help']]:
                 run(words, command=manager)
+            for words in [
+                ['cli', 'export-args', '-fjson'], ['cli', 'export-args', '--for=json'],
+                ['cli', 'export-args', 'junk'], ['cli', 'export-args', '--unknown'],
+                ['cli', 'export-args', '--version'], ['cli', 'export-args', '--format=bad', '--help'],
+                ['cli', 'sessions', 'upgrade-all'], ['--debug'],
+                ['cli', 'sessions', 'upgrade', 'example.org', str(session), '--help'],
+            ]:
+                run(words, command=manager)
             outputs.append(records)
         failures = 0
         for index, (reference, go) in enumerate(zip(*outputs)):

@@ -372,8 +372,10 @@ func exchange(ctx context.Context, t *transport, r *request, s *session, auth au
 				r.setHeader("Host", next.Host)
 			}
 		}
-		r.deleteHeader("Cookie")
-		if cookie := s.cookiesFor(r.URL); cookie != "" {
+		if !digest {
+			r.deleteHeader("Cookie")
+		}
+		if cookie := s.cookiesFor(r.URL); cookie != "" && r.Header.Get("Cookie") == "" {
 			r.setHeader("Cookie", cookie)
 			r.moveHeaderBefore("Cookie", "User-Agent")
 		}

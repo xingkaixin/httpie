@@ -204,6 +204,7 @@ func TestDigestAuthentication(t *testing.T) {
 		auth := r.Header.Get("Authorization")
 		if auth == "" {
 			w.Header().Set("WWW-Authenticate", `Basic realm="basic", Digest realm="test", nonce="nonce", qop="auth", algorithm=MD5`)
+			w.Header().Set("Set-Cookie", "challenge=seen; Path=/")
 			w.WriteHeader(401)
 			return
 		}
@@ -216,7 +217,7 @@ func TestDigestAuthentication(t *testing.T) {
 			fields[m[1]] = v
 		}
 		expected := hash(hash("user:test:password") + ":nonce:" + fields["nc"] + ":" + fields["cnonce"] + ":auth:" + hash(r.Method+":"+r.URL.RequestURI()))
-		if fields["response"] != expected {
+		if fields["response"] != expected || r.Header.Get("Cookie") != "token=secret" {
 			w.WriteHeader(403)
 			return
 		}
@@ -224,7 +225,7 @@ func TestDigestAuthentication(t *testing.T) {
 		w.Write(body)
 	}))
 	defer server.Close()
-	code, body, err := cli("--check-status", "-A", "digest", "-auser:password", server.URL, "--raw=repeatable body")
+	code, body, err := cli("--check-status", "-A", "digest", "-auser:password", server.URL, "Cookie:token=secret", "--raw=repeatable body")
 	if code != 0 || body != "repeatable body" {
 		t.Fatalf("digest: %d %q %s", code, body, err)
 	}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"math/big"
 	"sort"
 	"strconv"
 	"strings"
@@ -17,6 +18,102 @@ type field struct {
 	value any
 }
 type object []field
+
+func sortJSON(value any) error {
+	var failure error
+	switch value := value.(type) {
+	case object:
+		sort.SliceStable(value, func(i, j int) bool {
+			if value[i].key != value[j].key {
+				return value[i].key < value[j].key
+			}
+			order, err := compareJSON(value[i].value, value[j].value)
+			if err != nil {
+				failure = err
+			}
+			return order < 0
+		})
+		if failure != nil {
+			return failure
+		}
+		for _, field := range value {
+			if err := sortJSON(field.value); err != nil {
+				return err
+			}
+		}
+	case []any:
+		for _, element := range value {
+			if err := sortJSON(element); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func compareJSON(a, b any) (int, error) {
+	numeric := func(value any) (json.Number, bool) {
+		if value, ok := value.(bool); ok {
+			if value {
+				return "1", true
+			}
+			return "0", true
+		}
+		number, ok := value.(json.Number)
+		return number, ok
+	}
+	if a, ok := numeric(a); ok {
+		if b, ok := numeric(b); ok {
+			rational := func(n json.Number) *big.Rat {
+				if !strings.ContainsAny(string(n), ".eENaI") {
+					value, _ := new(big.Rat).SetString(string(n))
+					return value
+				}
+				value, _ := n.Float64()
+				return new(big.Rat).SetFloat64(value)
+			}
+			x, y := rational(a), rational(b)
+			if x != nil && y != nil {
+				return x.Cmp(y), nil
+			}
+			xf, _ := a.Float64()
+			yf, _ := b.Float64()
+			if xf < yf {
+				return -1, nil
+			}
+			if xf > yf {
+				return 1, nil
+			}
+			return 0, nil
+		}
+	}
+	switch a := a.(type) {
+	case nil:
+		if b == nil {
+			return 0, nil
+		}
+	case string:
+		if b, ok := b.(string); ok {
+			return strings.Compare(a, b), nil
+		}
+	case object:
+		// Upstream's duplicate-key dict stores the same sentinel for every nonempty object.
+		if b, ok := b.(object); ok && (len(a) == 0) == (len(b) == 0) {
+			return 0, nil
+		}
+	case []any:
+		if b, ok := b.([]any); ok {
+			for i := 0; i < min(len(a), len(b)); i++ {
+				order, err := compareJSON(a[i], b[i])
+				if err != nil || order != 0 {
+					return order, err
+				}
+			}
+			return len(a) - len(b), nil
+		}
+	}
+	return 0, fmt.Errorf("cannot compare JSON values %T and %T while sorting duplicate keys", a, b)
+}
 
 func decodeJSON(data []byte) (any, error) {
 	data, constants := jsonConstants(data)
@@ -73,7 +170,7 @@ func jsonValue(d *json.Decoder, constants map[int64]json.Number) (any, error) {
 		return t, nil
 	}
 }
-func jsonText(v any, indent int, sorted, ascii bool) []byte {
+func jsonText(v any, indent int, ascii bool) []byte {
 	var b bytes.Buffer
 	var write func(any, int)
 	quote := func(s string) string {
@@ -109,22 +206,7 @@ func jsonText(v any, indent int, sorted, ascii bool) []byte {
 	write = func(v any, depth int) {
 		switch v := v.(type) {
 		case object:
-			fields := append(object(nil), v...)
-			if sorted {
-				sort.SliceStable(fields, func(i, j int) bool {
-					if fields[i].key == fields[j].key {
-						left, lok := fields[i].value.(json.Number)
-						right, rok := fields[j].value.(json.Number)
-						if lok && rok {
-							a, _ := left.Float64()
-							b, _ := right.Float64()
-							return a < b
-						}
-						return string(jsonText(fields[i].value, -1, true, false)) < string(jsonText(fields[j].value, -1, true, false))
-					}
-					return fields[i].key < fields[j].key
-				})
-			}
+			fields := v
 			b.WriteByte('{')
 			for i, f := range fields {
 				if i > 0 {

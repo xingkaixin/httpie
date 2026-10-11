@@ -179,6 +179,12 @@ def main():
     add('version', ['--version'])
     add('help', ['--help'])
     add('manual', ['--manual'])
+    for body in ['{"x":9007199254740993,"x":9007199254740992}', '{"x":null,"x":1}',
+                 '{"x":true,"x":false}', '{"x":{"a":2},"x":{"a":1}}', '{"x":[2],"x":[1]}',
+                 '{"x":1,"x":"a"}', '{"x":null,"x":null}']:
+        for flags in [[], ['--unsorted']]:
+            add('duplicate JSON values ' + body + str(flags), ['-I', '--offline', '--pretty=format', '-pB',
+                                                            *flags, '--raw=' + body, 'example.org', 'Content-Type:application/json'])
     for width in [20, 40, 80, 120]:
         add(f'manual fallback width {width}', ['--manual'], env={'HTTPIE_NO_MAN_PAGES': '1', 'COLUMNS': str(width)})
         add(f'help width {width}', ['--help'], env={'COLUMNS': str(width)})

@@ -277,7 +277,7 @@ func buildRequest(o options, program string, stdin io.Reader, stdinTTY bool) (*r
 	contentType := ""
 	jsonMode := o.value("request-type") == "json" || (!form && (data != nil || fromStdin || fileCount > 0 || o.value("raw") != ""))
 	if data != nil {
-		body = bodySource{{data: jsonText(data, -1, false, true)}}
+		body = bodySource{{data: jsonText(data, -1, true)}}
 	}
 	if jsonMode {
 		contentType = "application/json"

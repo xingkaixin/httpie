@@ -271,7 +271,12 @@ func (o *output) writeBody(reader io.Reader, contentType string, response, heade
 				}
 				for _, start := range starts {
 					if value, err := decodeJSON(data[start:]); err == nil {
-						data = append(bytes.Clone(data[:start]), jsonText(value, indent, o.format["json.sort_keys"] == "true", false)...)
+						if o.format["json.sort_keys"] == "true" {
+							if err := sortJSON(value); err != nil {
+								return err
+							}
+						}
+						data = append(bytes.Clone(data[:start]), jsonText(value, indent, false)...)
 						break
 					}
 				}

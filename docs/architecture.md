@@ -12,11 +12,12 @@
 | `internal/cli/options.go` | 参数定义、短参数组合、交错参数、重置语义 |
 | `request.go`、`items.go`、`json.go`、`uploads.go` | URL、请求项、嵌套 JSON、文件、表单、可重放的 multipart 正文 |
 | `transport.go`、`tls_openssl.go` | HTTP/1.1、代理、连接、空闲超时、OpenSSL TLS |
-| `auth.go`、`run.go` | 认证、重定向、请求重放、信号取消、执行顺序 |
-| `output.go`、`colors.go`、`xml.go` | 输出选择、格式化、颜色、编码、流处理 |
-| `session.go` | 配置目录、默认参数、会话和 Cookie 持久化 |
+| `auth.go`、`netrc.go`、`run.go` | 认证、重定向、请求重放、信号取消、执行顺序 |
+| `output.go`、`colors.go`、`xml.go`、`xml_colors.go` | 输出选择、格式化、颜色、编码、流处理 |
+| `session.go`、`cookies.go` | 配置目录、默认参数、会话和 Cookie 持久化 |
 | `download.go` | 文件名、续传、完整性校验、进度显示 |
-| `manager.go`、`updates.go` | 帮助、参数导出、会话升级、更新检查 |
+| `manager.go`、`manual.go`、`updates.go` | 帮助、参数导出、会话升级、更新检查 |
+| `stdin.go` | stdin 首次数据观察及延迟警告 |
 
 所有实现均位于 `internal/`。没有公开库接口、插件框架或额外服务进程。
 
@@ -30,7 +31,7 @@ TLS 交给 OpenSSL。Go 标准库不能覆盖原版支持的全部 cipher 表达
 
 ## I/O 与状态
 
-原始文件和 multipart 按需打开，不整体读入。stdin 和请求压缩写入临时文件，以便重放且控制内存。格式化完整 JSON/XML 时需要缓冲；原始管道输出和下载保持流式 I/O。
+原始文件和 multipart 按需打开，不整体读入。普通 stdin 和请求压缩写入临时文件，以便重放且控制内存。指定 chunked 或 Content-Length 的在线 stdin 直接发送，不能假定该输入可重放。格式化完整 JSON/XML 时需要缓冲；原始管道输出和下载保持流式 I/O。
 
 会话兼容旧字典格式和新列表格式，保留未知元数据。通过同目录临时文件和重命名写入配置与会话。只读会话遵循原版“已有文件不更新，新会话可创建”的行为。
 
@@ -38,4 +39,4 @@ TLS 交给 OpenSSL。Go 标准库不能覆盖原版支持的全部 cipher 表达
 
 ## 外部实现
 
-Chroma 提供一般语法高亮，JSON 和 HTTP 使用与原版 ANSI token 对应的处理。内置主题表由基线 Pygments 导出，许可证保留在 `LICENSES/Pygments.txt`。Brotli、Chardet 和 `golang.org/x/text` 分别补充响应解压、无声明字符集检测和字符集转换。依赖版本锁定在 `go.mod`、`go.sum`。
+Chroma 提供一般语法高亮，JSON、HTTP 和 XML 使用与原版 token 对应的处理。内置主题表由基线 Pygments 导出，许可证保留在 `LICENSES/Pygments.txt`。Brotli、Chardet 和 `golang.org/x/text` 分别补充响应解压、无声明字符集检测和字符集转换。依赖版本锁定在 `go.mod`、`go.sum`。

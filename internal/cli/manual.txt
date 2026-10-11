@@ -1,0 +1,674 @@
+http(1)                          HTTPie Manual                         http(1)
+
+NNAAMMEE
+     http
+
+SSYYNNOOPPSSIISS
+     http [METHOD] URL [REQUEST_ITEM ...]
+
+
+DDEESSCCRRIIPPTTIIOONN
+     HTTPie: modern, user-friendly command-line HTTP client for the API era.
+     <https://httpie.io>
+
+PPoossiittiioonnaall aarrgguummeennttss
+     These arguments come after any flags and in the order they are listed
+     here.  Only URL is required.
+
+
+     MMEETTHHOODD
+
+
+            The HTTP method to be used for the request (GET, POST, PUT,
+            DELETE, ...).
+
+            This argument can be omitted in which case HTTPie will use POST if
+            there is some data to be sent, otherwise GET:
+
+                $ http example.org               # => GET
+                $ http example.org hello=world   # => POST
+
+
+
+
+     UURRLL
+
+
+            The request URL. Scheme defaults to 'http://' if the URL does not
+            include one. (You can override this with: ----ddeeffaauulltt--
+            sscchheemmee=http/https)
+
+            You can also use a shorthand for localhost
+
+                $ http :3000                    # => http://localhost:3000
+                $ http :/foo                    # => http://localhost/foo
+
+
+
+
+     RREEQQUUEESSTT__IITTEEMM
+
+
+            Optional key-value pairs to be included in the request. The
+            separator used determines the type:
+
+            ':' HTTP headers:
+
+                Referer:https://httpie.io  Cookie:foo=bar  User-
+            Agent:bacon/1.0
+
+            '==' URL parameters to be appended to the request URI:
+
+                search==httpie
+
+            '=' Data fields to be serialized into a JSON object (with ----jjssoonn,
+            --jj)
+                or form data (with ----ffoorrmm, --ff):
+
+                name=HTTPie  language=Python  description='CLI HTTP client'
+
+            ':=' Non-string JSON data fields (only with ----jjssoonn, --jj):
+
+                awesome:=true  amount:=42  colors:='["red", "green", "blue"]'
+
+            '@' Form file fields (only with ----ffoorrmm or ----mmuullttiippaarrtt):
+
+                cv@~/Documents/CV.pdf
+                cv@'~/Documents/CV.pdf;type=application/pdf'
+
+            '=@' A data field like '=', but takes a file path and embeds its
+            content:
+
+                essay=@Documents/essay.txt
+
+            ':=@' A raw JSON field like ':=', but takes a file path and embeds
+            its content:
+
+                package:=@./package.json
+
+            You can use a backslash to escape a colliding separator in the
+            field name:
+
+                field-name-with\:colon=value
+
+
+
+
+PPrreeddeeffiinneedd ccoonntteenntt ttyyppeess
+     ----jjssoonn, --jj
+
+
+            (default) Data items from the command line are serialized as a
+            JSON object.  The Content-Type and Accept headers are set to
+            application/json (if not specified).
+
+
+
+
+     ----ffoorrmm, --ff
+
+
+            Data items from the command line are serialized as form fields.
+
+            The Content-Type is set to application/x-www-form-urlencoded (if
+            not specified). The presence of any file fields results in a
+            multipart/form-data request.
+
+
+
+
+     ----mmuullttiippaarrtt
+
+
+            Similar to ----ffoorrmm, but always sends a multipart/form-data request
+            (i.e., even without files).
+
+
+
+     ----bboouunnddaarryy
+
+
+            Specify a custom boundary string for multipart/form-data requests.
+            Only has effect only together with ----ffoorrmm.
+
+
+
+     ----rraaww
+
+
+            This option allows you to pass raw request data without extra
+            processing (as opposed to the structured request items syntax):
+
+                $ http ----rraaww='data' pie.dev/post
+
+            You can achieve the same by piping the data via stdin:
+
+                $ echo data | http pie.dev/post
+
+            Or have HTTPie load the raw data from a file:
+
+                $ http pie.dev/post @data.txt
+
+
+
+
+
+CCoonntteenntt pprroocceessssiinngg ooppttiioonnss
+     ----ccoommpprreessss, --xx
+
+
+            Content compressed (encoded) with Deflate algorithm.  The Content-
+            Encoding header is set to deflate.
+
+            Compression is skipped if it appears that compression ratio is
+            negative. Compression can be forced by repeating the argument.
+
+
+
+
+OOuuttppuutt pprroocceessssiinngg
+     ----pprreettttyy
+
+
+            Controls output processing. The value can be "none" to not
+            prettify the output (default for redirected output), "all" to
+            apply both colors and formatting (default for terminal output),
+            "colors", or "format".
+
+
+
+
+     ----ssttyyllee, --ss _S_T_Y_L_E
+
+
+            Output coloring style (default is "auto"). It can be one of:
+
+                auto, pie, pie-dark, pie-light, solarized
+
+
+            For finding out all available styles in your system, try:
+
+            $ http ----ssttyyllee
+
+            The "auto" style follows your terminal's ANSI color styles.  For
+            non-auto styles to work properly, please make sure that the $TERM
+            environment variable is set to "xterm-256color" or similar (e.g.,
+            via `export TERM=xterm-256color' in your ~/.bashrc).
+
+
+     ----uunnssoorrtteedd
+
+
+            Disables all sorting while formatting output. It is a shortcut
+            for:
+
+                ----ffoorrmmaatt--ooppttiioonnss=headers.sort:false,json.sort_keys:false
+
+
+
+
+     ----ssoorrtteedd
+
+
+            Re-enables all sorting options while formatting output. It is a
+            shortcut for:
+
+                ----ffoorrmmaatt--ooppttiioonnss=headers.sort:true,json.sort_keys:true
+
+
+
+
+     ----rreessppoonnssee--cchhaarrsseett _E_N_C_O_D_I_N_G
+
+
+            Override the response encoding for terminal display purposes,
+            e.g.:
+
+                ----rreessppoonnssee--cchhaarrsseett=utf8
+                ----rreessppoonnssee--cchhaarrsseett=big5
+
+
+
+
+     ----rreessppoonnssee--mmiimmee _M_I_M_E___T_Y_P_E
+
+
+            Override the response mime type for coloring and formatting for
+            the terminal, e.g.:
+
+                ----rreessppoonnssee--mmiimmee=application/json
+                ----rreessppoonnssee--mmiimmee=text/xml
+
+
+
+
+     ----ffoorrmmaatt--ooppttiioonnss
+
+
+            Controls output formatting. Only relevant when formatting is
+            enabled through (explicit or implied) ----pprreettttyy=all or
+            ----pprreettttyy=format.  The following are the default options:
+
+                headers.sort:true
+                json.format:true
+                json.indent:4
+                json.sort_keys:true
+                xml.format:true
+                xml.indent:2
+
+            You may use this option multiple times, as well as specify
+            multiple comma-separated options at the same time. For example,
+            this modifies the settings to disable the sorting of JSON keys,
+            and sets the indent size to 2:
+
+                ----ffoorrmmaatt--ooppttiioonnss json.sort_keys:false,json.indent:2
+
+            This is something you will typically put into your config file.
+
+
+
+
+OOuuttppuutt ooppttiioonnss
+     ----pprriinntt, --pp _W_H_A_T
+
+
+            String specifying what the output should contain:
+
+                'H' request headers
+                'B' request body
+                'h' response headers
+                'b' response body
+                'm' response metadata
+
+            The default behaviour is 'hb' (i.e., the response headers and body
+            is printed), if standard output is not redirected.  If the output
+            is piped to another program or to a file, then only the response
+            body is printed by default.
+
+
+
+
+     ----hheeaaddeerrss, --hh
+
+
+            Print only the response headers. Shortcut for ----pprriinntt=h.
+
+
+
+
+     ----mmeettaa, --mm
+
+
+            Print only the response metadata. Shortcut for ----pprriinntt=m.
+
+
+
+
+     ----bbooddyy, --bb
+
+
+            Print only the response body. Shortcut for ----pprriinntt=b.
+
+
+
+
+     ----vveerrbboossee, --vv
+
+
+            Verbose output. For the level one (with single `--vv`/`----vveerrbboossee`),
+            print the whole request as well as the response. Also print any
+            intermediary requests/responses (such as redirects). For the
+            second level and higher, print these as well as the response
+            metadata.
+
+            Level one is a shortcut for: ----aallll ----pprriinntt=BHbh Level two is a
+            shortcut for: ----aallll ----pprriinntt=BHbhm
+
+
+
+     ----aallll
+
+
+            By default, only the final request/response is shown. Use this
+            flag to show any intermediary requests/responses as well.
+            Intermediary requests include followed redirects (with ----ffoollllooww),
+            the first unauthorized request when Digest auth is used
+            (----aauutthh=digest), etc.
+
+
+
+
+     ----ssttrreeaamm, --SS
+
+
+            Always stream the response body by line, i.e., behave like `tail
+            --ff'.
+
+            Without ----ssttrreeaamm and with ----pprreettttyy (either set or implied), HTTPie
+            fetches the whole response before it outputs the processed data.
+
+            Set this option when you want to continuously display a prettified
+            long-lived response, such as one from the Twitter streaming API.
+
+            It is useful also without ----pprreettttyy: It ensures that the output is
+            flushed more often and in smaller chunks.
+
+
+
+
+     ----oouuttppuutt, --oo _F_I_L_E
+
+
+            Save output to FILE instead of stdout. If ----ddoowwnnllooaadd is also set,
+            then only the response body is saved to FILE. Other parts of the
+            HTTP exchange are printed to stderr.
+
+
+
+
+     ----ddoowwnnllooaadd, --dd
+
+
+            Do not print the response body to stdout. Rather, download it and
+            store it in a file. The filename is guessed unless specified with
+            ----oouuttppuutt [filename]. This action is similar to the default
+            behaviour of wget.
+
+
+
+
+     ----ccoonnttiinnuuee, --cc
+
+
+            Resume an interrupted download. Note that the ----oouuttppuutt option
+            needs to be specified as well.
+
+
+
+
+     ----qquuiieett, --qq
+
+
+            Do not print to stdout or stderr, except for errors and warnings
+            when provided once.  Provide twice to suppress warnings as well.
+            stdout is still redirected if ----oouuttppuutt is specified.  Flag doesn't
+            affect behaviour of download beyond not printing to terminal.
+
+
+
+
+SSeessssiioonnss
+     ----sseessssiioonn _S_E_S_S_I_O_N___N_A_M_E___O_R___P_A_T_H
+
+
+            Create, or reuse and update a session. Within a session, custom
+            headers, auth credential, as well as any cookies sent by the
+            server persist between requests.
+
+            Session files are stored in:
+
+                [HTTPIE_CONFIG_DIR]/<HOST>/<SESSION_NAME>.json.
+
+            See the following page to find out your default HTTPIE_CONFIG_DIR:
+
+                https://httpie.io/docs/cli/config-file-directory
+
+
+
+     ----sseessssiioonn--rreeaadd--oonnllyy _S_E_S_S_I_O_N___N_A_M_E___O_R___P_A_T_H
+
+
+            Create or read a session without updating it form the
+            request/response exchange.
+
+
+
+
+AAuutthheennttiiccaattiioonn
+     ----aauutthh, --aa _U_S_E_R_[_:_P_A_S_S_] _| _T_O_K_E_N
+
+
+            For username/password based authentication mechanisms (e.g basic
+            auth or digest auth) if only the username is provided (--aa
+            username), HTTPie will prompt for the password.
+
+
+
+
+     ----aauutthh--ttyyppee, --AA
+
+
+            The authentication mechanism to be used. Defaults to "basic".
+
+            "basic": Basic HTTP auth
+
+            "digest": Digest HTTP auth
+
+            "bearer": Bearer HTTP Auth
+
+            To see all available auth types on your system, including ones
+            installed via plugins, run:
+
+            $ http ----aauutthh--ttyyppee
+
+
+     ----iiggnnoorree--nneettrrcc
+
+
+            Ignore credentials from .netrc.
+
+
+
+NNeettwwoorrkk
+     ----oofffflliinnee
+
+
+            Build the request and print it but don`t actually send it.
+
+
+
+     ----pprrooxxyy _P_R_O_T_O_C_O_L_:_P_R_O_X_Y___U_R_L
+
+
+            String mapping protocol to the URL of the proxy (e.g.
+            http:http://foo.bar:3128). You can specify multiple proxies with
+            different protocols. The environment variables $ALL_PROXY,
+            $HTTP_PROXY, and $HTTPS_proxy are supported as well.
+
+
+
+
+     ----ffoollllooww, --FF
+
+
+            Follow 30x Location redirects.
+
+
+
+     ----mmaaxx--rreeddiirreeccttss
+
+
+            By default, requests have a limit of 30 redirects (works with
+            ----ffoollllooww).
+
+
+
+
+     ----mmaaxx--hheeaaddeerrss
+
+
+            The maximum number of response headers to be read before giving up
+            (default 0, i.e., no limit).
+
+
+
+     ----ttiimmeeoouutt _S_E_C_O_N_D_S
+
+
+            The connection timeout of the request in seconds.  The default
+            value is 0, i.e., there is no timeout limit.  This is not a time
+            limit on the entire response download; rather, an error is
+            reported if the server has not issued a response for timeout
+            seconds (more precisely, if no bytes have been received on the
+            underlying socket for timeout seconds).
+
+
+
+
+     ----cchheecckk--ssttaattuuss
+
+
+            By default, HTTPie exits with 0 when no network or other fatal
+            errors occur. This flag instructs HTTPie to also check the HTTP
+            status code and exit with an error if the status indicates one.
+
+            When the server replies with a 4xx (Client Error) or 5xx (Server
+            Error) status code, HTTPie exits with 4 or 5 respectively. If the
+            response is a 3xx (Redirect) and ----ffoollllooww hasn't been set, then
+            the exit status is 3.  Also an error message is written to stderr
+            if stdout is redirected.
+
+
+
+
+     ----ppaatthh--aass--iiss
+
+
+            Bypass dot segment (/../ or /./) URL squashing.
+
+
+
+     ----cchhuunnkkeedd
+
+
+            Enable streaming via chunked transfer encoding. The Transfer-
+            Encoding header is set to chunked.
+
+
+
+SSSSLL
+     ----vveerriiffyy
+
+
+            Set to "no" (or "false") to skip checking the host's SSL
+            certificate.  Defaults to "yes" ("true"). You can also pass the
+            path to a CA_BUNDLE file for private certs. (Or you can set the
+            REQUESTS_CA_BUNDLE environment variable instead.)
+
+
+
+     ----ssssll
+
+
+            The desired protocol version to use. This will default to SSL v2.3
+            which will negotiate the highest protocol that both the server and
+            your installation of OpenSSL support. Available protocols may vary
+            depending on OpenSSL installation (only the supported ones are
+            shown here).
+
+
+
+
+     ----cciipphheerrss
+
+
+
+            A string in the OpenSSL cipher list format.
+
+
+            See `http ----hheellpp` for the default ciphers list on you system.
+
+
+
+
+
+
+     ----cceerrtt
+
+
+            You can specify a local cert to use as client side SSL
+            certificate.  This file may either contain both private key and
+            certificate or you may specify ----cceerrtt--kkeeyy separately.
+
+
+
+
+     ----cceerrtt--kkeeyy
+
+
+            The private key to use with SSL. Only needed if ----cceerrtt is given
+            and the certificate file does not contain the private key.
+
+
+
+
+     ----cceerrtt--kkeeyy--ppaassss
+
+
+            The passphrase to be used to with the given private key. Only
+            needed if ----cceerrtt--kkeeyy is given and the key file requires a
+            passphrase.  If not provided, you`ll be prompted interactively.
+
+
+
+TTrroouubblleesshhoooottiinngg
+     ----iiggnnoorree--ssttddiinn, --II
+
+
+            Do not attempt to read stdin
+
+
+
+     ----hheellpp
+
+
+            Show this help message and exit.
+
+
+
+     ----mmaannuuaall
+
+
+            Show the full manual.
+
+
+
+     ----vveerrssiioonn
+
+
+            Show version and exit.
+
+
+
+     ----ttrraacceebbaacckk
+
+
+            Prints the exception traceback should one occur.
+
+
+
+     ----ddeeffaauulltt--sscchheemmee
+
+
+            The default scheme to use if not specified in the URL.
+
+
+
+     ----ddeebbuugg
+
+
+            Prints the exception traceback should one occur, as well as other
+            information useful for debugging HTTPie itself and for reporting
+            bugs.
+
+
+
+
+SSEEEE AALLSSOO
+     For every ----OOPPTTIIOONN there is also a ----nnoo--OOPPTTIIOONN that reverts OPTION to its
+     default value.
+
+     Suggestions and bug reports are greatly appreciated:
+     https://github.com/httpie/cli/issues
+
+HTTPie 3.2.4                      2024-07-10                           http(1)

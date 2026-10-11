@@ -179,6 +179,9 @@ def main():
     add('version', ['--version'])
     add('help', ['--help'])
     add('manual', ['--manual'])
+    for width in [20, 40, 80, 120]:
+        add(f'manual fallback width {width}', ['--manual'], env={'HTTPIE_NO_MAN_PAGES': '1', 'COLUMNS': str(width)})
+        add(f'help width {width}', ['--help'], env={'COLUMNS': str(width)})
     for suffix in ['/a%2Fb', '/a//b', '/a/./b/../c/', '/a/%2E%2E/b', '/a%20b?q=a b', '/café?q=中文']:
         for flag in [[], ['--path-as-is']]:
             add('URL ' + suffix + str(flag), ['-I', '--offline', *flag, 'example.org' + suffix])
@@ -331,6 +334,10 @@ def main():
         Path(temp, 'config.json').write_text('{"disable_update_warnings":true}')
         fixture = Path(temp, 'data.txt')
         fixture.write_text('hello file\n')
+        man = Path(temp, 'man')
+        man.write_text('#!/bin/sh\nprintf "manual section=%s program=%s\\n" "$1" "$2"\n')
+        man.chmod(0o755)
+        add('manual system command', ['--manual'], env={'PATH': temp + os.pathsep + env['PATH'], 'HTTPIE_NO_MAN_PAGES': ''})
         for flags, items in [([], ['@' + str(fixture)]), (['-f', '--boundary=BOUNDARY'], ['f@' + str(fixture), 'a=b']),
                              ([], ['text=@' + str(fixture)]), ([], ['q==@' + str(fixture)]),
                              ([], ['X-File:@' + str(fixture)])]:

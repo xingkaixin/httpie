@@ -12,9 +12,6 @@ import (
 	"strings"
 )
 
-//go:embed manual.txt
-var manual string
-
 //go:embed help.txt
 var help string
 

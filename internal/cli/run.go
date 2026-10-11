@@ -60,12 +60,11 @@ func run(program string, args []string, stdin io.Reader, stdout, stderr io.Write
 		_, err = fmt.Fprintln(stdout, version)
 		return 0, err
 	}
-	if o.has("help") || o.has("manual") {
-		text := help
-		if o.has("manual") {
-			text = manual
-		}
-		_, err = io.WriteString(stdout, text)
+	if o.has("manual") {
+		return 0, printManual(program, stdin, stdout, stderr, stdinTTY && stdoutTTY)
+	}
+	if o.has("help") {
+		_, err = io.WriteString(stdout, formatHelp(helpWidth(stdout)))
 		return 0, err
 	}
 	if o.has("debug") {

@@ -12,20 +12,25 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 
 	"golang.org/x/term"
 )
 
 func readPassword(prompt string) (string, error) {
-	terminal, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
+	device := "/dev/tty"
+	if runtime.GOOS == "windows" {
+		device = "CONIN$"
+	}
+	terminal, err := os.OpenFile(device, os.O_RDWR, 0)
 	if err != nil {
 		return "", fmt.Errorf("unable to prompt for a password: %w", err)
 	}
 	defer terminal.Close()
-	fmt.Fprint(terminal, prompt)
+	fmt.Fprint(os.Stderr, prompt)
 	password, err := term.ReadPassword(int(terminal.Fd()))
-	fmt.Fprintln(terminal)
+	fmt.Fprintln(os.Stderr)
 	return string(password), err
 }
 func authCredentials(o options, r *request) (string, string, error) {
@@ -93,6 +98,9 @@ func netrcAuth(host string) (string, bool) {
 	if filename == "" {
 		home, _ := os.UserHomeDir()
 		filename = filepath.Join(home, ".netrc")
+		if _, err := os.Stat(filename); os.IsNotExist(err) {
+			filename = filepath.Join(home, "_netrc")
+		}
 	}
 	data, err := os.ReadFile(filename)
 	if err != nil {

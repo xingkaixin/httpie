@@ -1,6 +1,9 @@
 [tools]
 go = "1.27.2"
 
+[env]
+CGO_ENABLED = "1"
+
 [tasks.build]
 description = "Build the three CLI commands"
 run = "go build -trimpath -o bin/ ./cmd/..."
@@ -16,7 +19,7 @@ run = "test -z \"$(gofmt -l cmd internal)\" && go vet ./... && go test -race ./.
 [tasks.parity]
 description = "Compare the Go CLI with the supplied Python baseline"
 depends = ["build"]
-run = "python3 scripts/parity.py"
+run = "python3 scripts/parity.py && python3 scripts/state-parity.py"
 
 [tasks.bench]
 description = "Measure CLI latency and peak RSS"

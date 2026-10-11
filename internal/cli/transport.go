@@ -4,10 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"encoding/base64"
-	"encoding/pem"
 	"fmt"
 	"io"
 	"net"
@@ -18,7 +15,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/youmark/pkcs8"
 	"golang.org/x/net/http/httpproxy"
 	"golang.org/x/net/proxy"
 )
@@ -43,13 +39,18 @@ func (c *idleConn) Write(p []byte) (int, error) {
 
 type transport struct {
 	options options
-	tls     *tls.Config
+	tls     *tlsSettings
 	conn    net.Conn
 	reader  *bufio.Reader
 	target  string
+	cancel  func() bool
 }
 
 func (t *transport) Close() {
+	if t.cancel != nil {
+		t.cancel()
+		t.cancel = nil
+	}
 	if t.conn != nil {
 		_ = t.conn.Close()
 		t.conn = nil
@@ -57,7 +58,7 @@ func (t *transport) Close() {
 	t.target = ""
 }
 func newTransport(o options) (*transport, error) {
-	config, err := tlsConfig(o)
+	config, err := newTLSSettings(o)
 	if err != nil {
 		return nil, err
 	}
@@ -89,7 +90,46 @@ func (t *transport) proxyFor(u *url.URL) (*url.URL, error) {
 			env.HTTPSProxy = os.Getenv("all_proxy")
 		}
 	}
-	return env.ProxyFunc()(u)
+	if bypassProxy(u, env.NoProxy) {
+		return nil, nil
+	}
+	raw := env.HTTPProxy
+	if u.Scheme == "https" {
+		raw = env.HTTPSProxy
+	}
+	if raw == "" {
+		return nil, nil
+	}
+	if !strings.Contains(raw, "://") {
+		raw = "http://" + raw
+	}
+	return url.Parse(raw)
+}
+
+func bypassProxy(u *url.URL, rules string) bool {
+	host := strings.ToLower(u.Hostname())
+	for _, rule := range strings.Split(rules, ",") {
+		rule = strings.ToLower(strings.TrimSpace(rule))
+		if rule == "*" {
+			return true
+		}
+		if _, network, err := net.ParseCIDR(rule); err == nil && network.Contains(net.ParseIP(host)) {
+			return true
+		}
+		if rule == "" {
+			continue
+		}
+		if strings.Contains(rule, ":") {
+			if rule == strings.ToLower(u.Host) {
+				return true
+			}
+			continue
+		}
+		if host == strings.TrimPrefix(rule, ".") || strings.HasSuffix(host, "."+strings.TrimPrefix(rule, ".")) {
+			return true
+		}
+	}
+	return false
 }
 func address(u *url.URL) string {
 	port := u.Port()
@@ -149,10 +189,8 @@ func (t *transport) connect(ctx context.Context, u, proxyURL *url.URL) error {
 	conn = &idleConn{Conn: conn, timeout: timeout}
 	closeOnError := func(err error) error { conn.Close(); return err }
 	if proxyURL != nil && proxyURL.Scheme == "https" {
-		cfg := t.tls.Clone()
-		cfg.ServerName = proxyURL.Hostname()
-		secured := tls.Client(conn, cfg)
-		if err := secured.HandshakeContext(ctx); err != nil {
+		secured, err := t.tls.connect(ctx, conn, proxyURL.Hostname())
+		if err != nil {
 			return closeOnError(err)
 		}
 		conn = secured
@@ -175,15 +213,14 @@ func (t *transport) connect(ctx context.Context, u, proxyURL *url.URL) error {
 		}
 	}
 	if u.Scheme == "https" {
-		cfg := t.tls.Clone()
-		cfg.ServerName = u.Hostname()
-		secured := tls.Client(conn, cfg)
-		if err := secured.HandshakeContext(ctx); err != nil {
+		secured, err := t.tls.connect(ctx, conn, u.Hostname())
+		if err != nil {
 			return closeOnError(err)
 		}
 		conn = secured
 	}
 	t.conn = conn
+	t.cancel = context.AfterFunc(ctx, func() { _ = conn.Close() })
 	t.reader = bufio.NewReader(conn)
 	t.target = target
 	return nil
@@ -271,6 +308,12 @@ func (t *transport) send(ctx context.Context, r *request) (*http.Response, []hea
 			if e != nil {
 				return nil, nil, e
 			}
+			if len(line) > 65536 {
+				return nil, nil, fmt.Errorf("response header line exceeds 65536 bytes")
+			}
+			if max := t.options.integer("max-headers"); max > 0 && lineNumber > max {
+				return nil, nil, fmt.Errorf("got more than %d headers", max)
+			}
 			raw.WriteString(line)
 			if line == "\r\n" || line == "\n" {
 				break
@@ -278,14 +321,15 @@ func (t *transport) send(ctx context.Context, r *request) (*http.Response, []hea
 			if lineNumber == 0 {
 				continue
 			}
+			if (line[0] == ' ' || line[0] == '\t') && len(headers) > 0 {
+				headers[len(headers)-1].Value += "\r\n" + strings.TrimRight(line, "\r\n")
+				continue
+			}
 			name, value, ok := strings.Cut(strings.TrimRight(line, "\r\n"), ":")
 			if !ok {
 				return nil, nil, fmt.Errorf("malformed response header")
 			}
 			headers = append(headers, header{name, strings.TrimSpace(value)})
-			if max := t.options.integer("max-headers"); max > 0 && len(headers) > max {
-				return nil, nil, fmt.Errorf("got more than %d headers", max)
-			}
 		}
 		reader := bufio.NewReader(io.MultiReader(bytes.NewReader(raw.Bytes()), t.reader))
 		response, e := http.ReadResponse(reader, r.Request)
@@ -297,172 +341,4 @@ func (t *transport) send(ctx context.Context, r *request) (*http.Response, []hea
 		}
 		return response, headers, nil
 	}
-}
-
-func tlsConfig(o options) (*tls.Config, error) {
-	c := &tls.Config{MinVersion: tls.VersionTLS12, NextProtos: []string{"http/1.1"}}
-	verify := o.value("verify")
-	c.InsecureSkipVerify = strings.EqualFold(verify, "no") || strings.EqualFold(verify, "false")
-	if verify == "yes" || verify == "true" {
-		verify = os.Getenv("REQUESTS_CA_BUNDLE")
-		if verify == "" {
-			verify = os.Getenv("CURL_CA_BUNDLE")
-		}
-	}
-	if verify != "" && verify != "no" && verify != "false" && verify != "yes" && verify != "true" {
-		bundle, err := os.ReadFile(expandPath(verify))
-		if err != nil {
-			return nil, err
-		}
-		c.RootCAs = x509.NewCertPool()
-		if !c.RootCAs.AppendCertsFromPEM(bundle) {
-			return nil, fmt.Errorf("no CA certificates in %s", verify)
-		}
-	}
-	switch o.value("ssl") {
-	case "", "ssl2.3":
-	case "tls1":
-		c.MinVersion = tls.VersionTLS10
-		c.MaxVersion = tls.VersionTLS10
-	case "tls1.1":
-		c.MinVersion = tls.VersionTLS11
-		c.MaxVersion = tls.VersionTLS11
-	case "tls1.2":
-		c.MaxVersion = tls.VersionTLS12
-	case "tls1.3":
-		c.MinVersion = tls.VersionTLS13
-	default:
-		return nil, fmt.Errorf("unsupported SSL version: %s", o.value("ssl"))
-	}
-	if o.has("ciphers") {
-		ids, err := cipherSuites(o.value("ciphers"))
-		if err != nil {
-			return nil, err
-		}
-		c.CipherSuites = ids
-	}
-	if o.has("cert") {
-		cert, err := os.ReadFile(expandPath(o.value("cert")))
-		if err != nil {
-			return nil, err
-		}
-		key := cert
-		if o.has("cert-key") {
-			key, err = os.ReadFile(expandPath(o.value("cert-key")))
-			if err != nil {
-				return nil, err
-			}
-		}
-		if block, _ := pem.Decode(key); block != nil && (block.Type == "ENCRYPTED PRIVATE KEY" || x509.IsEncryptedPEMBlock(block)) {
-			password := o.value("cert-key-pass")
-			if !o.has("cert-key-pass") {
-				password, err = readPassword("Password for client private key: ")
-				if err != nil {
-					return nil, err
-				}
-			}
-			if block.Type == "ENCRYPTED PRIVATE KEY" {
-				private, e := pkcs8.ParsePKCS8PrivateKey(block.Bytes, []byte(password))
-				if e != nil {
-					return nil, e
-				}
-				der, e := x509.MarshalPKCS8PrivateKey(private)
-				if e != nil {
-					return nil, e
-				}
-				key = pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})
-			} else {
-				der, e := x509.DecryptPEMBlock(block, []byte(password))
-				if e != nil {
-					return nil, e
-				}
-				key = pem.EncodeToMemory(&pem.Block{Type: block.Type, Bytes: der})
-			}
-		}
-		pair, err := tls.X509KeyPair(cert, key)
-		if err != nil {
-			return nil, err
-		}
-		c.Certificates = []tls.Certificate{pair}
-	}
-	return c, nil
-}
-
-func cipherSuites(expression string) ([]uint16, error) {
-	all := append(tls.CipherSuites(), tls.InsecureCipherSuites()...)
-	var ids []uint16
-	excluded := map[uint16]bool{}
-	for _, part := range strings.FieldsFunc(expression, func(r rune) bool { return r == ':' || r == ',' || r == ' ' }) {
-		if strings.HasPrefix(part, "@SECLEVEL=") {
-			continue
-		}
-		remove := strings.HasPrefix(part, "!") || strings.HasPrefix(part, "-")
-		name := strings.TrimLeft(part, "!-+")
-		var matches []uint16
-		for _, suite := range all {
-			if suite.ID >= 0x1301 && suite.ID <= 0x1303 {
-				continue
-			}
-			openssl := strings.TrimPrefix(suite.Name, "TLS_")
-			openssl = strings.ReplaceAll(openssl, "_WITH_", "-")
-			openssl = strings.ReplaceAll(openssl, "AES_128", "AES128")
-			openssl = strings.ReplaceAll(openssl, "AES_256", "AES256")
-			openssl = strings.ReplaceAll(openssl, "_", "-")
-			openssl = strings.TrimPrefix(openssl, "RSA-")
-			openssl = strings.ReplaceAll(openssl, "-CBC-", "-")
-			match := name == suite.Name || name == openssl
-			switch name {
-			case "DEFAULT", "HIGH", "ALL":
-				match = !suite.Insecure
-			case "ECDHE":
-				match = strings.Contains(suite.Name, "ECDHE")
-			case "AESGCM":
-				match = strings.Contains(suite.Name, "GCM")
-			case "AES128":
-				match = strings.Contains(suite.Name, "AES_128")
-			case "AES256":
-				match = strings.Contains(suite.Name, "AES_256")
-			case "CHACHA20":
-				match = strings.Contains(suite.Name, "CHACHA20")
-			case "RSA":
-				match = strings.Contains(suite.Name, "RSA")
-			case "ECDSA":
-				match = strings.Contains(suite.Name, "ECDSA")
-			case "3DES":
-				match = strings.Contains(suite.Name, "3DES")
-			case "RC4":
-				match = strings.Contains(suite.Name, "RC4")
-			}
-			if match {
-				matches = append(matches, suite.ID)
-			}
-		}
-		for _, id := range matches {
-			if remove {
-				if strings.HasPrefix(part, "!") {
-					excluded[id] = true
-				}
-				for i := 0; i < len(ids); i++ {
-					if ids[i] == id {
-						ids = append(ids[:i], ids[i+1:]...)
-						i--
-					}
-				}
-			} else if !excluded[id] {
-				found := false
-				for _, existing := range ids {
-					if existing == id {
-						found = true
-					}
-				}
-				if !found {
-					ids = append(ids, id)
-				}
-			}
-		}
-	}
-	if len(ids) == 0 {
-		return nil, fmt.Errorf("no cipher can be selected from %q", expression)
-	}
-	return ids, nil
 }

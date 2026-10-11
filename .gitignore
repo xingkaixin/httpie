@@ -1,0 +1,6 @@
+/bin/
+/.reference/
+/.venv/
+/.bench/
+*.prof
+.DS_Store

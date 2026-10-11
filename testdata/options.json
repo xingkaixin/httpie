@@ -1,0 +1,507 @@
+[
+  {
+    "options": [
+      "--json",
+      "-j"
+    ],
+    "action": "store_const",
+    "dest": "request_type",
+    "default": null,
+    "description": "(default) Serialize data items from the command line as a JSON object."
+  },
+  {
+    "options": [
+      "--form",
+      "-f"
+    ],
+    "action": "store_const",
+    "dest": "request_type",
+    "default": null,
+    "description": "Serialize data items from the command line as form field data."
+  },
+  {
+    "options": [
+      "--multipart"
+    ],
+    "action": "store_const",
+    "dest": "request_type",
+    "default": null,
+    "description": "Similar to --form, but always sends a multipart/form-data request (i.e., even without files)."
+  },
+  {
+    "options": [
+      "--boundary"
+    ],
+    "action": "store",
+    "dest": "boundary",
+    "default": null,
+    "description": "Specify a custom boundary string for multipart/form-data requests. Only has effect only together with --form."
+  },
+  {
+    "options": [
+      "--raw"
+    ],
+    "action": "store",
+    "dest": "raw",
+    "default": null,
+    "description": "Pass raw request data without extra processing."
+  },
+  {
+    "options": [
+      "--compress",
+      "-x"
+    ],
+    "action": "count",
+    "dest": "compress",
+    "default": 0,
+    "description": "Compress the content with Deflate algorithm."
+  },
+  {
+    "options": [
+      "--pretty"
+    ],
+    "action": "store",
+    "dest": "prettify",
+    "default": null,
+    "description": "Control the processing of console outputs."
+  },
+  {
+    "options": [
+      "--style",
+      "-s"
+    ],
+    "action": "lazy_choices",
+    "dest": "style",
+    "default": null,
+    "description": ""
+  },
+  {
+    "options": [
+      "--no-unsorted"
+    ],
+    "action": "store",
+    "dest": "no_unsorted",
+    "default": null,
+    "description": ""
+  },
+  {
+    "options": [
+      "--no-sorted"
+    ],
+    "action": "store",
+    "dest": "no_sorted",
+    "default": null,
+    "description": ""
+  },
+  {
+    "options": [
+      "--unsorted"
+    ],
+    "action": "store",
+    "dest": "unsorted",
+    "default": null,
+    "description": "Disables all sorting while formatting output."
+  },
+  {
+    "options": [
+      "--sorted"
+    ],
+    "action": "store",
+    "dest": "sorted",
+    "default": null,
+    "description": "Re-enables all sorting options while formatting output."
+  },
+  {
+    "options": [
+      "--response-charset"
+    ],
+    "action": "store",
+    "dest": "response_charset",
+    "default": null,
+    "description": "Override the response encoding for terminal display purposes."
+  },
+  {
+    "options": [
+      "--response-mime"
+    ],
+    "action": "store",
+    "dest": "response_mime",
+    "default": null,
+    "description": "Override the response mime type for coloring and formatting for the terminal."
+  },
+  {
+    "options": [
+      "--format-options"
+    ],
+    "action": "append",
+    "dest": "format_options",
+    "default": null,
+    "description": "Controls output formatting."
+  },
+  {
+    "options": [
+      "--print",
+      "-p"
+    ],
+    "action": "store",
+    "dest": "output_options",
+    "default": null,
+    "description": "Options to specify what the console output should contain."
+  },
+  {
+    "options": [
+      "--headers",
+      "-h"
+    ],
+    "action": "store_const",
+    "dest": "output_options",
+    "default": null,
+    "description": "Print only the response headers."
+  },
+  {
+    "options": [
+      "--meta",
+      "-m"
+    ],
+    "action": "store_const",
+    "dest": "output_options",
+    "default": null,
+    "description": "Print only the response metadata."
+  },
+  {
+    "options": [
+      "--body",
+      "-b"
+    ],
+    "action": "store_const",
+    "dest": "output_options",
+    "default": null,
+    "description": "Print only the response body."
+  },
+  {
+    "options": [
+      "--verbose",
+      "-v"
+    ],
+    "action": "count",
+    "dest": "verbose",
+    "default": 0,
+    "description": "Make output more verbose."
+  },
+  {
+    "options": [
+      "--all"
+    ],
+    "action": "store_true",
+    "dest": "all",
+    "default": false,
+    "description": "Show any intermediary requests/responses."
+  },
+  {
+    "options": [
+      "--history-print",
+      "-P"
+    ],
+    "action": "store",
+    "dest": "output_options_history",
+    "default": null,
+    "description": ""
+  },
+  {
+    "options": [
+      "--stream",
+      "-S"
+    ],
+    "action": "store_true",
+    "dest": "stream",
+    "default": false,
+    "description": "Always stream the response body by line, i.e., behave like `tail -f`."
+  },
+  {
+    "options": [
+      "--output",
+      "-o"
+    ],
+    "action": "store",
+    "dest": "output_file",
+    "default": null,
+    "description": "Save output to FILE instead of stdout."
+  },
+  {
+    "options": [
+      "--download",
+      "-d"
+    ],
+    "action": "store_true",
+    "dest": "download",
+    "default": false,
+    "description": "Download the body to a file instead of printing it to stdout."
+  },
+  {
+    "options": [
+      "--continue",
+      "-c"
+    ],
+    "action": "store_true",
+    "dest": "download_resume",
+    "default": false,
+    "description": "Resume an interrupted download (--output needs to be specified)."
+  },
+  {
+    "options": [
+      "--quiet",
+      "-q"
+    ],
+    "action": "count",
+    "dest": "quiet",
+    "default": 0,
+    "description": "Do not print to stdout or stderr, except for errors and warnings when provided once."
+  },
+  {
+    "options": [
+      "--session"
+    ],
+    "action": "store",
+    "dest": "session",
+    "default": null,
+    "description": "Create, or reuse and update a session."
+  },
+  {
+    "options": [
+      "--session-read-only"
+    ],
+    "action": "store",
+    "dest": "session_read_only",
+    "default": null,
+    "description": "Create or read a session without updating it"
+  },
+  {
+    "options": [
+      "--auth",
+      "-a"
+    ],
+    "action": "store",
+    "dest": "auth",
+    "default": null,
+    "description": "Credentials for the selected (-A) authentication method."
+  },
+  {
+    "options": [
+      "--auth-type",
+      "-A"
+    ],
+    "action": "lazy_choices",
+    "dest": "auth_type",
+    "default": null,
+    "description": "The authentication mechanism to be used."
+  },
+  {
+    "options": [
+      "--ignore-netrc"
+    ],
+    "action": "store_true",
+    "dest": "ignore_netrc",
+    "default": false,
+    "description": "Ignore credentials from .netrc."
+  },
+  {
+    "options": [
+      "--offline"
+    ],
+    "action": "store_true",
+    "dest": "offline",
+    "default": false,
+    "description": "Build the request and print it but don\u2019t actually send it."
+  },
+  {
+    "options": [
+      "--proxy"
+    ],
+    "action": "append",
+    "dest": "proxy",
+    "default": [],
+    "description": "String mapping of protocol to the URL of the proxy."
+  },
+  {
+    "options": [
+      "--follow",
+      "-F"
+    ],
+    "action": "store_true",
+    "dest": "follow",
+    "default": false,
+    "description": "Follow 30x Location redirects."
+  },
+  {
+    "options": [
+      "--max-redirects"
+    ],
+    "action": "store",
+    "dest": "max_redirects",
+    "default": 30,
+    "description": "The maximum number of redirects that should be followed (with --follow)."
+  },
+  {
+    "options": [
+      "--max-headers"
+    ],
+    "action": "store",
+    "dest": "max_headers",
+    "default": 0,
+    "description": "The maximum number of response headers to be read before giving up (default 0, i.e., no limit)."
+  },
+  {
+    "options": [
+      "--timeout"
+    ],
+    "action": "store",
+    "dest": "timeout",
+    "default": 0,
+    "description": "The connection timeout of the request in seconds."
+  },
+  {
+    "options": [
+      "--check-status"
+    ],
+    "action": "store_true",
+    "dest": "check_status",
+    "default": false,
+    "description": "Exit with an error status code if the server replies with an error."
+  },
+  {
+    "options": [
+      "--path-as-is"
+    ],
+    "action": "store_true",
+    "dest": "path_as_is",
+    "default": false,
+    "description": "Bypass dot segment (/../ or /./) URL squashing."
+  },
+  {
+    "options": [
+      "--chunked"
+    ],
+    "action": "store_true",
+    "dest": "chunked",
+    "default": false,
+    "description": "Enable streaming via chunked transfer encoding. The Transfer-Encoding header is set to chunked."
+  },
+  {
+    "options": [
+      "--verify"
+    ],
+    "action": "store",
+    "dest": "verify",
+    "default": "yes",
+    "description": "If \"no\", skip SSL verification. If a file path, use it as a CA bundle."
+  },
+  {
+    "options": [
+      "--ssl"
+    ],
+    "action": "store",
+    "dest": "ssl_version",
+    "default": null,
+    "description": "The desired protocol version to used."
+  },
+  {
+    "options": [
+      "--ciphers"
+    ],
+    "action": "store",
+    "dest": "ciphers",
+    "default": null,
+    "description": "A string in the OpenSSL cipher list format."
+  },
+  {
+    "options": [
+      "--cert"
+    ],
+    "action": "store",
+    "dest": "cert",
+    "default": null,
+    "description": "Specifies a local cert to use as the client-side SSL certificate."
+  },
+  {
+    "options": [
+      "--cert-key"
+    ],
+    "action": "store",
+    "dest": "cert_key",
+    "default": null,
+    "description": "The private key to use with SSL. Only needed if --cert is given."
+  },
+  {
+    "options": [
+      "--cert-key-pass"
+    ],
+    "action": "store",
+    "dest": "cert_key_pass",
+    "default": null,
+    "description": "The passphrase to be used to with the given private key."
+  },
+  {
+    "options": [
+      "--ignore-stdin",
+      "-I"
+    ],
+    "action": "store_true",
+    "dest": "ignore_stdin",
+    "default": false,
+    "description": "Do not attempt to read stdin"
+  },
+  {
+    "options": [
+      "--help"
+    ],
+    "action": "help",
+    "dest": "help",
+    "default": null,
+    "description": "Show this help message and exit."
+  },
+  {
+    "options": [
+      "--manual"
+    ],
+    "action": "manual",
+    "dest": "manual",
+    "default": null,
+    "description": "Show the full manual."
+  },
+  {
+    "options": [
+      "--version"
+    ],
+    "action": "version",
+    "dest": "version",
+    "default": null,
+    "description": "Show version and exit."
+  },
+  {
+    "options": [
+      "--traceback"
+    ],
+    "action": "store_true",
+    "dest": "traceback",
+    "default": false,
+    "description": "Prints the exception traceback should one occur."
+  },
+  {
+    "options": [
+      "--default-scheme"
+    ],
+    "action": "store",
+    "dest": "default_scheme",
+    "default": "http",
+    "description": "The default scheme to use if not specified in the URL."
+  },
+  {
+    "options": [
+      "--debug"
+    ],
+    "action": "store_true",
+    "dest": "debug",
+    "default": false,
+    "description": "Print useful diagnostic information for bug reports."
+  }
+]

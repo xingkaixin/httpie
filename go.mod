@@ -5,6 +5,7 @@ go 1.27.2
 require (
 	github.com/alecthomas/chroma/v2 v2.27.0
 	github.com/andybalholm/brotli v1.2.6
+	github.com/wlynxg/chardet v1.0.5
 	github.com/youmark/pkcs8 v0.0.0-20240726163527-a2c0da244d78
 	golang.org/x/net v0.61.0
 	golang.org/x/term v0.47.0

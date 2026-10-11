@@ -136,15 +136,15 @@ class Server(http.server.BaseHTTPRequestHandler):
     do_POST = do_PUT = do_PATCH = do_DELETE = do_OPTIONS = do_HEAD = do_GET
 
 
-def invoke(binary, args, stdin, env, terminal=False):
+def invoke(binary, args, stdin, env, terminal=False, cwd=None):
     if not terminal:
         result = subprocess.run([str(binary), *args], input=stdin or b'', stdout=subprocess.PIPE,
-                                stderr=subprocess.PIPE, env=env, timeout=10)
+                                stderr=subprocess.PIPE, env=env, cwd=cwd, timeout=10)
         return result.returncode, result.stdout
     master, slave = pty.openpty()
     tty.setraw(slave)
     process = subprocess.Popen([str(binary), *args], stdin=subprocess.DEVNULL, stdout=slave,
-                               stderr=subprocess.PIPE, env=env)
+                               stderr=subprocess.PIPE, env=env, cwd=cwd)
     os.close(slave)
     output = bytearray()
     try:

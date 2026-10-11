@@ -4,9 +4,10 @@ from datetime import datetime
 import os
 from pathlib import Path
 import subprocess
+import select
 import tempfile
 import threading
-from parity import ROOT, Server
+from parity import ROOT, Server, invoke
 import http.server
 
 
@@ -69,6 +70,16 @@ def main():
             destination.write_bytes(b'01234')
             run(['-I', '-dco', str(destination), '-q', url + '/range'])
             records.append(destination.read_bytes())
+            download_dir = directory / 'downloads'
+            download_dir.mkdir()
+            for disposition in ['attachment; filename=/etc/hosts', 'attachment; filename=hello world.txt',
+                                'attachment; filename="../.hidden"', "attachment; filename*=UTF-8''caf%C3%A9.txt",
+                                'attachment; filename=a; filename=b', 'attachment; filename="a;b.txt"']:
+                Server.responses['/filename'] = (b'download', 'text/plain', {'Content-Disposition': disposition})
+                records.append(invoke(binary, ['-I', '-dq', url + '/filename'], None, env, terminal=True, cwd=download_dir))
+                records.append(sorted((p.name, p.read_bytes()) for p in download_dir.iterdir()))
+                for path in download_dir.iterdir():
+                    path.unlink()
             for endpoint, initial, flags, response in [
                 ('empty-resume', b'', ['-dc'], (b'123', 'text/plain', {'Content-Range': 'invalid'}, 206)),
                 ('short-range', b'01234', ['-dc'], (b'56', 'text/plain', {'Content-Range': 'bytes 5-9/10'}, 206)),
@@ -137,6 +148,11 @@ def main():
                 records.append(json.loads(session.read_text())['cookies'])
             run(['-I', '--session=' + str(session), url + '/echo'])
             env['NETRC'] = str(directory / 'netrc')
+            Path(env['NETRC']).write_text('machine 127.0.0.1 login first password secret\nmachine localhost login second password other')
+            Server.responses['/netrc-redirect'] = (b'', 'text/plain', {'Location': f'http://localhost:{server.server_port}/echo'}, 302)
+            for endpoint in ['/netrc-redirect', '/redirect/302']:
+                for flags in [[], ['--ignore-netrc'], ['-aexplicit:password'], ['-A', 'bearer', '-atoken']]:
+                    run(['-I', '-F', *flags, url + endpoint])
             for contents in [
                 'machine example.org login user account acct password pass',
                 'machine example.org account acct login user password pass',

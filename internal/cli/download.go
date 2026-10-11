@@ -75,8 +75,7 @@ func download(r *http.Response, initialURL *url.URL, o options, stdout, stderr i
 		}
 		file, err = os.OpenFile(expandPath(filename), flags, 0666)
 	} else if stdoutTTY && !outputStdout {
-		_, params, _ := mime.ParseMediaType(r.Header.Get("Content-Disposition"))
-		filename = strings.TrimSpace(strings.TrimLeft(filepath.Base(params["filename"]), "."))
+		filename = dispositionFilename(r.Header.Get("Content-Disposition"))
 		if filename == "" || filename == "/" {
 			filename = filepath.Base(strings.TrimRight(initialURL.EscapedPath(), "/"))
 			if filename == "." || filename == "/" || filename == "" {
@@ -154,6 +153,36 @@ func download(r *http.Response, initialURL *url.URL, o options, stdout, stderr i
 		}
 	}
 	return nil
+}
+
+var dispositionParameter = regexp.MustCompile(`;\s*([^=;\s]+)\s*=\s*("(?:\\.|[^"\\])*"|[^;]*)`)
+
+func dispositionFilename(value string) string {
+	_, params, err := mime.ParseMediaType(value)
+	filename := params["filename"]
+	if err != nil {
+		for _, match := range dispositionParameter.FindAllStringSubmatch(value, -1) {
+			if !strings.EqualFold(match[1], "filename") {
+				continue
+			}
+			filename = strings.TrimSpace(match[2])
+			if strings.HasPrefix(filename, `"`) && strings.HasSuffix(filename, `"`) {
+				var text strings.Builder
+				escaped := false
+				for _, char := range filename[1 : len(filename)-1] {
+					if char == '\\' && !escaped {
+						escaped = true
+						continue
+					}
+					text.WriteRune(char)
+					escaped = false
+				}
+				filename = text.String()
+			}
+			break
+		}
+	}
+	return strings.TrimSpace(strings.TrimLeft(filepath.Base(filename), "."))
 }
 
 type downloadProgress struct {

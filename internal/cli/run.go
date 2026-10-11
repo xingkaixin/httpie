@@ -332,13 +332,19 @@ func exchange(ctx context.Context, t *transport, r *request, s *session, auth au
 			if next.Scheme != "http" && next.Scheme != "https" {
 				return 1, fmt.Errorf("unsupported redirect scheme: %s", next.Scheme)
 			}
-			stripAuth := r.URL.Hostname() != next.Hostname() || r.URL.Port() != next.Port() || r.URL.Scheme != next.Scheme
+			stripAuth := address(r.URL) != address(next) || r.URL.Scheme != next.Scheme
 			if r.URL.Hostname() == next.Hostname() && r.URL.Scheme == "http" && next.Scheme == "https" && (r.URL.Port() == "" || r.URL.Port() == "80") && (next.Port() == "" || next.Port() == "443") {
 				stripAuth = false
 			}
 			if stripAuth {
 				r.deleteHeader("Authorization")
 				auth.kind = ""
+			}
+			if user, password, ok := netrcAuth(next.Hostname()); ok {
+				auth = authentication{kind: "basic", username: user, password: password, latin1: true}
+				if err := applyAuth(r, auth); err != nil {
+					return 1, err
+				}
 			}
 			status := response.StatusCode
 			if status == 303 && r.Method != "HEAD" || status == 302 && r.Method != "HEAD" || status == 301 && r.Method == "POST" {

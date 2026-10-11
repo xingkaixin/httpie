@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"golang.org/x/net/idna"
 )
@@ -113,9 +114,13 @@ func buildRequest(o options, program string, stdin io.Reader, stdinTTY bool) (*r
 	if u.Scheme != "http" && u.Scheme != "https" {
 		return fail(fmt.Errorf("unsupported URL scheme: %s", u.Scheme))
 	}
-	if !strings.Contains(u.Hostname(), ":") {
-		host, err := idna.Lookup.ToASCII(u.Hostname())
-		if err != nil {
+	if host := u.Hostname(); !strings.Contains(host, ":") {
+		if strings.HasPrefix(host, "*") || strings.HasPrefix(host, ".") {
+			return fail(fmt.Errorf("invalid URL label: %s", host))
+		}
+		if strings.IndexFunc(host, func(r rune) bool { return r >= utf8.RuneSelf }) < 0 {
+			host = strings.ToLower(host)
+		} else if host, err = idna.Lookup.ToASCII(host); err != nil {
 			return fail(err)
 		}
 		if u.Port() != "" {

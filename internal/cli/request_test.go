@@ -42,6 +42,7 @@ func TestRequestContract(t *testing.T) {
 		method, url, body, ct string
 	}{
 		{[]string{"example.org"}, "GET", "http://example.org/", "", ""},
+		{[]string{"Project_API_1/status"}, "GET", "http://project_api_1/status", "", ""},
 		{[]string{":3000/path", "x==a b", "x==c"}, "GET", "http://localhost:3000/path?x=a+b&x=c", "", ""},
 		{[]string{"example.org", "a=1", "b:=true"}, "POST", "http://example.org/", `{"a": "1", "b": true}`, "application/json"},
 		{[]string{"--form", "example.org", "a=1", "a=2", "x:=true"}, "POST", "http://example.org/", "a=1&a=2&x=True", "application/x-www-form-urlencoded; charset=utf-8"},

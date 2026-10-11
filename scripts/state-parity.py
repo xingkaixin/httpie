@@ -54,6 +54,23 @@ def main():
             destination.write_bytes(b'01234')
             run(['-I', '-dco', str(destination), '-q', url + '/range'])
             records.append(destination.read_bytes())
+            for endpoint, initial, flags, response in [
+                ('empty-resume', b'', ['-dc'], (b'123', 'text/plain', {'Content-Range': 'invalid'}, 206)),
+                ('short-range', b'01234', ['-dc'], (b'56', 'text/plain', {'Content-Range': 'bytes 5-9/10'}, 206)),
+                ('unknown-range-size', b'01234', ['-dc'], (b'56789', 'text/plain', {'Content-Range': 'bytes 5-9/*'}, 206)),
+            ]:
+                Server.responses['/' + endpoint] = response
+                destination.write_bytes(initial)
+                run(['-I', '-q', *flags, '-o', str(destination), url + '/' + endpoint])
+                records.append(destination.read_bytes())
+            destination.unlink()
+            run(['-I', '-dq', '-o', str(destination), url + '/status/404'])
+            records.append(destination.exists())
+            records.append(destination.read_bytes() if destination.exists() else None)
+            run(['-I', '-dq', '-o-', url + '/range'])
+            run(['-I', '-o-', url + '/echo'])
+            run(['-I', '-dq', '-o', str(destination), url + '/compressed/gzip'])
+            records.append(destination.read_bytes())
             for fixture in sorted((ROOT / '.reference/cli-master/tests/fixtures/session_data').rglob('*.json')):
                 content = fixture.read_text().replace('__version__', '3.2.4')
                 try:

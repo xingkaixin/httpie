@@ -16,8 +16,18 @@ import (
 
 func prepareDownload(r *request, o options) (int64, error) {
 	r.setHeader("Accept-Encoding", "identity")
+	if filename := o.value("output"); filename != "" && filename != "-" {
+		file, err := os.OpenFile(expandPath(filename), os.O_CREATE|os.O_RDWR, 0666)
+		if err != nil {
+			return 0, err
+		}
+		file.Close()
+	}
 	if !o.has("continue") {
 		return 0, nil
+	}
+	if o.value("output") == "-" {
+		return 0, fmt.Errorf("cannot resume a download to standard output")
 	}
 	stat, err := os.Stat(expandPath(o.value("output")))
 	if os.IsNotExist(err) {
@@ -35,7 +45,8 @@ func prepareDownload(r *request, o options) (int64, error) {
 var contentRange = regexp.MustCompile(`^bytes (\d+)-(\d+)/(\d+|\*)$`)
 
 func download(r *http.Response, initialURL *url.URL, o options, stdout, stderr io.Writer, stdoutTTY, stderrTTY bool, resume int64) (err error) {
-	if r.StatusCode == 206 && resume > 0 {
+	totalSize := r.ContentLength
+	if r.StatusCode == 206 && o.has("continue") {
 		match := contentRange.FindStringSubmatch(r.Header.Get("Content-Range"))
 		if match == nil {
 			return fmt.Errorf("invalid or missing Content-Range")
@@ -46,10 +57,15 @@ func download(r *http.Response, initialURL *url.URL, o options, stdout, stderr i
 		if start != resume || end < start || (match[3] != "*" && end+1 != total) {
 			return fmt.Errorf("unexpected Content-Range for requested Range")
 		}
+		totalSize = end + 1
 	} else {
 		resume = 0
 	}
 	filename := o.value("output")
+	outputStdout := filename == "-"
+	if outputStdout {
+		filename = ""
+	}
 	writer := stdout
 	var file *os.File
 	if filename != "" {
@@ -58,7 +74,7 @@ func download(r *http.Response, initialURL *url.URL, o options, stdout, stderr i
 			flags = os.O_CREATE | os.O_WRONLY | os.O_APPEND
 		}
 		file, err = os.OpenFile(expandPath(filename), flags, 0666)
-	} else if stdoutTTY {
+	} else if stdoutTTY && !outputStdout {
 		_, params, _ := mime.ParseMediaType(r.Header.Get("Content-Disposition"))
 		filename = strings.TrimSpace(strings.TrimLeft(filepath.Base(params["filename"]), "."))
 		if filename == "" || filename == "/" {
@@ -120,17 +136,17 @@ func download(r *http.Response, initialURL *url.URL, o options, stdout, stderr i
 		if name == "" {
 			name = "<stdout>"
 		}
-		total := r.ContentLength
-		if total >= 0 {
-			total += resume
-		}
-		progress := &downloadProgress{Writer: writer, display: stderr, tty: stderrTTY, total: total, downloaded: resume, started: time.Now()}
+		progress := &downloadProgress{Writer: writer, display: stderr, tty: stderrTTY, total: totalSize, downloaded: resume, started: time.Now()}
 		fmt.Fprintf(stderr, "Downloading to %s\n", name)
 		writer = progress
 		defer func() { progress.finish(err == nil) }()
 	}
-	if _, err = io.Copy(writer, body); err != nil {
+	written, err := io.Copy(writer, body)
+	if err != nil {
 		return err
+	}
+	if totalSize > 0 && written+resume != totalSize {
+		return fmt.Errorf("incomplete download: size=%d; downloaded=%d", totalSize, written+resume)
 	}
 	if file != nil {
 		if err = file.Close(); err != nil {

@@ -85,7 +85,18 @@ func run(program string, args []string, stdin io.Reader, stdout, stderr io.Write
 		writer = stderr
 		tty = stderrTTY
 	} else if o.has("output") {
-		outputFile, err = os.OpenFile(expandPath(o.value("output")), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0666)
+		if o.value("output") == "-" {
+			var ok bool
+			outputFile, ok = stdout.(*os.File)
+			if !ok {
+				return 1, fmt.Errorf("standard output is not seekable")
+			}
+			if _, err = outputFile.Seek(0, io.SeekStart); err == nil {
+				err = outputFile.Truncate(0)
+			}
+		} else {
+			outputFile, err = os.OpenFile(expandPath(o.value("output")), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0666)
+		}
 		if err != nil {
 			return 1, err
 		}

@@ -12,10 +12,23 @@ import (
 	"golang.org/x/text/transform"
 )
 
+var codePages = map[string]string{
+	"cp858":   "ibm00858",
+	"cp874":   "windows-874",
+	"cp932":   "shift_jis",
+	"cp949":   "euc-kr",
+	"cp950":   "big5",
+	"cp1140":  "ibm01140",
+	"cp65001": "utf-8",
+}
+
 func textEncoding(name string) encoding.Encoding {
 	name = strings.ReplaceAll(strings.ToLower(name), "_", "-")
 	if name == "utf-8-sig" {
 		return unicode.UTF8BOM
+	}
+	if alias, ok := codePages[name]; ok {
+		name = alias
 	}
 	if strings.HasPrefix(name, "cp125") {
 		name = "windows-" + name[2:]

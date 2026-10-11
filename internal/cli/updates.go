@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -8,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -40,13 +40,17 @@ func readVersionInfo(path string) versionInfo {
 }
 func fetchUpdates() error {
 	path, _ := updateSettings()
-	client := http.Client{Timeout: 15 * time.Second}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	// The baseline's update index request uses requests.get(..., verify=False).
+	transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+	defer transport.CloseIdleConnections()
+	client := http.Client{Transport: transport}
 	response, err := client.Get("https://packages.httpie.io/latest.json")
 	if err != nil {
 		return err
 	}
 	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
+	if response.StatusCode >= 400 {
 		return fmt.Errorf("update check: %s", response.Status)
 	}
 	info := readVersionInfo(path)
@@ -54,33 +58,49 @@ func fetchUpdates() error {
 		return err
 	}
 	info.LastFetched = time.Now().Format("2006-01-02T15:04:05.999999")
-	return saveJSON(path, info)
+	return saveVersionInfo(path, info)
 }
 
-var versionDigits = regexp.MustCompile(`\d+`)
+func saveVersionInfo(path string, info versionInfo) error {
+	fields := map[string]any{}
+	data, _ := os.ReadFile(path)
+	_ = json.Unmarshal(data, &fields)
+	if fields == nil {
+		fields = map[string]any{}
+	}
+	fields["last_fetched_date"] = info.LastFetched
+	fields["last_warned_date"] = info.LastWarned
+	fields["last_released_versions"] = info.Versions
+	return saveJSON(path, fields)
+}
 
 func newerVersion(candidate, current string) bool {
-	a, b := versionDigits.FindAllString(candidate, 3), versionDigits.FindAllString(current, 3)
-	for i := 0; i < 3; i++ {
-		x, y := 0, 0
-		if i < len(a) {
-			x, _ = strconv.Atoi(a[i])
+	parse := func(value string) []int {
+		var version []int
+		parts := strings.Split(value, ".")
+		for _, part := range parts[:min(3, len(parts))] {
+			n, err := strconv.Atoi(strings.TrimSpace(part))
+			if err != nil {
+				break
+			}
+			version = append(version, n)
 		}
-		if i < len(b) {
-			y, _ = strconv.Atoi(b[i])
-		}
-		if x != y {
-			return x > y
+		return version
+	}
+	a, b := parse(candidate), parse(current)
+	for i := 0; i < min(len(a), len(b)); i++ {
+		if a[i] != b[i] {
+			return a[i] > b[i]
 		}
 	}
-	return !strings.Contains(candidate, "dev") && strings.Contains(current, "dev")
+	return len(a) > len(b)
 }
 func updateMessage(info versionInfo) string {
-	latest := info.Versions["pypi"]
+	latest := info.Versions["unknown"]
 	if latest == "" || !newerVersion(latest, version) {
 		return ""
 	}
-	return fmt.Sprintf("A new HTTPie release (%s) is available.\nTo see how you can update, please visit https://httpie.io/docs/cli/pypi\n", latest)
+	return fmt.Sprintf("A new HTTPie release (%s) is available.\nTo see how you can update, please visit https://httpie.io/docs/cli/unknown\n", latest)
 }
 func updateStatus() string {
 	path, _ := updateSettings()
@@ -89,7 +109,7 @@ func updateStatus() string {
 	}
 	return "You are already up-to-date.\n"
 }
-func checkUpdateWarnings(stderr io.Writer, quiet int) {
+func checkUpdateWarnings(stderr io.Writer, program string, quiet bool) {
 	path, disabled := updateSettings()
 	if disabled {
 		return
@@ -99,11 +119,13 @@ func checkUpdateWarnings(stderr io.Writer, quiet int) {
 		date, _ := time.ParseInLocation("2006-01-02T15:04:05.999999", value, time.Local)
 		return date
 	}
-	if message := updateMessage(info); message != "" && quiet == 0 && (info.LastWarned == nil || time.Since(parseTime(*info.LastWarned)) > 7*24*time.Hour) {
-		fmt.Fprintf(stderr, "\nhttp: info: %s\n", message)
+	if message := updateMessage(info); message != "" && (info.LastWarned == nil || time.Since(parseTime(*info.LastWarned)) > 7*24*time.Hour) {
+		if !quiet {
+			fmt.Fprintf(stderr, "\n%s: info: %s\n", program, message)
+		}
 		now := time.Now().Format("2006-01-02T15:04:05.999999")
 		info.LastWarned = &now
-		_ = saveJSON(path, info)
+		_ = saveVersionInfo(path, info)
 	}
 	if time.Since(parseTime(info.LastFetched)) < 14*24*time.Hour {
 		return

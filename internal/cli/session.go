@@ -17,18 +17,18 @@ import (
 
 func configDir() string {
 	if dir := os.Getenv("HTTPIE_CONFIG_DIR"); dir != "" {
-		return expandPath(dir)
+		return dir
 	}
 	if runtime.GOOS == "windows" {
 		return filepath.Join(os.Getenv("APPDATA"), "httpie")
 	}
 	home, _ := os.UserHomeDir()
 	legacy := filepath.Join(home, ".httpie")
-	if info, err := os.Stat(legacy); err == nil && info.IsDir() {
+	if _, err := os.Stat(legacy); err == nil {
 		return legacy
 	}
-	root := os.Getenv("XDG_CONFIG_HOME")
-	if root == "" {
+	root, configured := os.LookupEnv("XDG_CONFIG_HOME")
+	if !configured {
 		root = filepath.Join(home, ".config")
 	}
 	return filepath.Join(root, "httpie")
@@ -41,13 +41,37 @@ func configArgs(args []string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	var config struct {
-		DefaultOptions []string `json:"default_options"`
-	}
+	var config any
 	if err = json.Unmarshal(data, &config); err != nil {
 		return nil, fmt.Errorf("invalid config file: %w", err)
 	}
-	return append(config.DefaultOptions, args...), nil
+	fields, ok := config.(map[string]any)
+	if !ok && config != nil {
+		return nil, fmt.Errorf("config must be an object")
+	}
+	value := fields["default_options"]
+	if value == nil || value == false || value == float64(0) || value == "" {
+		return args, nil
+	}
+	if values, ok := value.(map[string]any); ok && len(values) == 0 {
+		return args, nil
+	}
+	values, ok := value.([]any)
+	if !ok {
+		return nil, fmt.Errorf("default_options must be an array of strings")
+	}
+	configuredArgs := make([]string, 0, len(values)+len(args))
+	for _, value := range values {
+		if value == nil {
+			continue
+		}
+		arg, ok := value.(string)
+		if !ok {
+			return nil, fmt.Errorf("default_options must contain strings")
+		}
+		configuredArgs = append(configuredArgs, arg)
+	}
+	return append(configuredArgs, args...), nil
 }
 func saveJSON(filename string, data any) error {
 	body, err := json.MarshalIndent(data, "", "    ")

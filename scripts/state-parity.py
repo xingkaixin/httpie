@@ -1,5 +1,6 @@
 """Compare configuration, saved sessions, and download files across implementations."""
 import json
+from datetime import datetime
 import os
 from pathlib import Path
 import subprocess
@@ -49,6 +50,20 @@ def main():
             config.write_text('{"disable_update_warnings":true}')
             config.write_text('{broken')
             run(['--help'])
+            for value in [None, '--offline', 3, {}, [True], [None], ['--offline']]:
+                config.write_text(json.dumps({'disable_update_warnings': True, 'default_options': value}))
+                run(['--help'])
+            version_file = directory / 'version_info.json'
+            config.write_text('{"disable_update_warnings":false}')
+            for candidate in ['3.2.5', '3.2.5rc1', 'v3.3.0', '4', '3.3', '3.2.4.1']:
+                for quiet in [[], ['-q']]:
+                    version_file.write_text(json.dumps({'last_fetched_date': datetime.now().isoformat(),
+                                                       'last_warned_date': None, 'last_released_versions': {'unknown': candidate},
+                                                       'extra': 'preserve'}))
+                    result = run(['-I', '--offline', *quiet, 'example.org'])
+                    records.append(b'A new HTTPie release' in result.stderr)
+                    data = json.loads(version_file.read_text())
+                    records.append((data['last_warned_date'] is not None, data.get('extra')))
             config.write_text('{"disable_update_warnings":true}')
             destination = directory / 'download'
             destination.write_bytes(b'01234')

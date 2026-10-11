@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -41,6 +42,11 @@ func run(program string, args []string, stdin io.Reader, stdout, stderr io.Write
 	}
 	configured, configErr := configArgs(args)
 	if configErr != nil {
+		var syntax *json.SyntaxError
+		var fileErr *os.PathError
+		if !errors.As(configErr, &syntax) && !errors.As(configErr, &fileErr) {
+			return 1, configErr
+		}
 		fmt.Fprintf(stderr, "\n%s: warning: %s\n", program, configErr)
 	} else {
 		args = configured
@@ -73,7 +79,6 @@ func run(program string, args []string, stdin io.Reader, stdout, stderr io.Write
 	if o.has("debug") && len(o.args) == 0 {
 		return 0, nil
 	}
-	defer checkUpdateWarnings(stderr, o.count("quiet"))
 	if o.has("offline") {
 		delete(o.values, "download")
 		delete(o.values, "continue")
@@ -158,6 +163,7 @@ func run(program string, args []string, stdin io.Reader, stdout, stderr io.Write
 		req.setHeader("Cookie", cookie)
 		req.moveHeaderBefore("Cookie", "User-Agent")
 	}
+	checkUpdateWarnings(stderr, program, stdoutTTY && o.has("quiet"))
 	transport, err := newTransport(o)
 	if err != nil {
 		return 1, err

@@ -203,7 +203,7 @@ func TestDigestAuthentication(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		auth := r.Header.Get("Authorization")
 		if auth == "" {
-			w.Header().Set("WWW-Authenticate", `Digest realm="test", nonce="nonce", qop="auth", algorithm=MD5`)
+			w.Header().Set("WWW-Authenticate", `Basic realm="basic", Digest realm="test", nonce="nonce", qop="auth", algorithm=MD5`)
 			w.WriteHeader(401)
 			return
 		}

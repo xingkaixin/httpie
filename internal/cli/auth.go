@@ -135,6 +135,16 @@ func applyAuth(r *request, a authentication) error {
 }
 
 var digestField = regexp.MustCompile(`([\w-]+)\s*=\s*(?:"((?:[^"\\]|\\.)*)"|([^,\s]+))`)
+var digestScheme = regexp.MustCompile(`(?i)(?:^|,)\s*digest\s`)
+
+func digestChallenge(values []string) (string, bool) {
+	challenges := strings.Join(values, ", ")
+	loc := digestScheme.FindStringIndex(challenges)
+	if loc == nil {
+		return "", false
+	}
+	return challenges[loc[1]:], true
+}
 
 func digestAuthorization(challenge, method, uri string, auth authentication) (string, error) {
 	fields := map[string]string{}

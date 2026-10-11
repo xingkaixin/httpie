@@ -261,7 +261,8 @@ func exchange(ctx context.Context, t *transport, r *request, s *session, auth au
 		}
 		s.receiveCookies(response.Cookies(), r.URL)
 		redirect := response.Header.Get("Location") != "" && (response.StatusCode == 301 || response.StatusCode == 302 || response.StatusCode == 303 || response.StatusCode == 307 || response.StatusCode == 308)
-		digest := auth.kind == "digest" && !digestTried && response.StatusCode == 401 && strings.HasPrefix(strings.ToLower(response.Header.Get("WWW-Authenticate")), "digest ")
+		challenge, offered := digestChallenge(response.Header.Values("WWW-Authenticate"))
+		digest := auth.kind == "digest" && !digestTried && response.StatusCode == 401 && offered
 		if redirect {
 			redirects++
 			if max := o.integer("max-redirects"); max != 0 && redirects == max {
@@ -322,7 +323,7 @@ func exchange(ctx context.Context, t *transport, r *request, s *session, auth au
 			t.Close()
 		}
 		if digest {
-			value, e := digestAuthorization(response.Header.Get("WWW-Authenticate"), r.Method, r.URL.RequestURI(), auth)
+			value, e := digestAuthorization(challenge, r.Method, r.URL.RequestURI(), auth)
 			if e != nil {
 				return 1, e
 			}

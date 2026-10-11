@@ -8,6 +8,14 @@ CGO_ENABLED = "1"
 description = "Build the three CLI commands"
 run = "go build -trimpath -o bin/ ./cmd/..."
 
+[tasks.install]
+description = "Build and install CLI commands"
+depends = ["build"]
+run = """
+mkdir -p "$HOME/.local/bin"
+install -m 755 bin/http bin/https bin/httpie "$HOME/.local/bin/"
+"""
+
 [tasks.test]
 description = "Run behavior tests"
 run = "go test ./..."

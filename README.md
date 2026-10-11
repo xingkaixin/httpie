@@ -35,6 +35,23 @@ bin/https example.org
 bin/httpie cli sessions --help
 ```
 
+## 安装
+
+macOS / Linux 上，在项目目录执行：
+
+```sh
+mise run install
+```
+
+任务会先构建，再将 `http`、`https`、`httpie` 复制到 `~/.local/bin`，不需要 sudo。该目录加入 PATH 后，可以在任意目录直接调用：
+
+```sh
+http --version
+http --offline example.org name=HTTPie count:=42
+```
+
+更新代码后重新执行 `mise run install`，即可覆盖更新已安装的命令。安装后的二进制不依赖项目目录，运行时仍需系统中的 OpenSSL 动态库。
+
 ## 验证
 
 ```sh

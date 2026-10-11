@@ -115,6 +115,11 @@ func run(program string, args []string, stdin io.Reader, stdout, stderr io.Write
 	if err != nil {
 		return 1, err
 	}
+	if !stdinTTY && !o.has("ignore-stdin") && !o.has("offline") {
+		var stop func()
+		stdin, stop = watchStdin(stdin, stderr)
+		defer stop()
+	}
 	req, cleanup, err := buildRequest(o, program, stdin, stdinTTY)
 	if err != nil {
 		return 1, err

@@ -243,7 +243,11 @@ func buildRequest(o options, program string, stdin io.Reader, stdinTTY bool) (*r
 		return fail(fmt.Errorf("request body (from stdin, --raw or a file) and request data (key=value) cannot be mixed; pass --ignore-stdin"))
 	}
 	var liveInput io.Reader
-	if fromStdin && !o.has("offline") && o.has("chunked") {
+	explicitLength := false
+	for _, h := range custom {
+		explicitLength = explicitLength || strings.EqualFold(h.Name, "Content-Length") && h.Value != ""
+	}
+	if fromStdin && !o.has("offline") && !o.has("compress") && (o.has("chunked") || explicitLength) {
 		liveInput = stdin
 	} else if fromStdin {
 		f, err := os.CreateTemp("", "httpie-stdin-*")

@@ -330,6 +330,8 @@ func (t *transport) send(ctx context.Context, r *request) (*http.Response, []hea
 			if err == nil {
 				_, err = io.WriteString(w, "0\r\n\r\n")
 			}
+		} else if r.liveInput {
+			_, err = io.Copy(t.conn, r.Body)
 		} else {
 			_, err = io.Copy(w, r.Body)
 		}

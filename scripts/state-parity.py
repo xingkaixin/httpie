@@ -28,6 +28,13 @@ def main():
             binary = ROOT / folder / 'http'
             records = []
 
+            process = subprocess.Popen([str(binary), url + '/echo'], env=dict(env, HTTPIE_STDIN_READ_WARN_THRESHOLD='.05'),
+                                       stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            ready, _, _ = select.select([process.stderr], [], [], 3)
+            warned = bool(ready)
+            output, errors = process.communicate(b'input', timeout=10)
+            records.append((process.returncode, output, warned and b'no stdin data read' in errors))
+
             def run(args, save=True, command=binary):
                 result = subprocess.run([str(command), *args], env=env, input=b'', stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10)
                 if save:

@@ -198,25 +198,48 @@ func exchange(ctx context.Context, t *transport, r *request, s *session, auth au
 	redirects := 0
 	digestTried := false
 	initialURL := r.URL
+	selection := out.selection()
+	previousBody := false
+	separate := func(selected bool) error {
+		if previousBody && selected && !out.tty {
+			_, err := io.WriteString(out.writer, "\n\n")
+			return err
+		}
+		return nil
+	}
 	for {
+		if !digestTried {
+			if err := separate(strings.ContainsAny(selection, "HB")); err != nil {
+				return 1, err
+			}
+			if err := out.writeRequest(r, selection); err != nil {
+				return 1, err
+			}
+			previousBody = strings.Contains(selection, "B")
+		}
 		start := time.Now()
 		response, headers, err := t.send(ctx, r)
 		if err != nil {
 			return 1, err
 		}
 		s.receiveCookies(response.Cookies(), r.URL)
-		redirect := follow && response.Header.Get("Location") != "" && (response.StatusCode == 301 || response.StatusCode == 302 || response.StatusCode == 303 || response.StatusCode == 307 || response.StatusCode == 308)
+		redirect := response.Header.Get("Location") != "" && (response.StatusCode == 301 || response.StatusCode == 302 || response.StatusCode == 303 || response.StatusCode == 307 || response.StatusCode == 308)
 		digest := auth.kind == "digest" && !digestTried && response.StatusCode == 401 && strings.HasPrefix(strings.ToLower(response.Header.Get("WWW-Authenticate")), "digest ")
-		selection := out.selection()
-		if history || (!redirect && !digest) {
-			if err = out.writeRequest(r, selection); err == nil && !out.tty && strings.Contains(selection, "B") && strings.ContainsAny(selection, "hbm") {
-				_, err = io.WriteString(out.writer, "\n\n")
+		if redirect {
+			redirects++
+			if max := o.integer("max-redirects"); max != 0 && redirects == max {
+				t.Close()
+				response.Body.Close()
+				return 6, fmt.Errorf("too many redirects (--max-redirects=%d)", max)
 			}
-			if err == nil {
-				responseSelection := selection
-				if o.has("download") {
-					responseSelection = strings.ReplaceAll(responseSelection, "b", "")
-				}
+		}
+		redirect = follow && redirect
+		if !digest && (history || !redirect) {
+			responseSelection := selection
+			if o.has("download") {
+				responseSelection = strings.ReplaceAll(responseSelection, "b", "")
+			}
+			if err = separate(strings.ContainsAny(responseSelection, "hbm")); err == nil {
 				err = out.writeResponse(response, headers, responseSelection, start)
 			}
 			if err != nil {
@@ -224,6 +247,7 @@ func exchange(ctx context.Context, t *transport, r *request, s *session, auth au
 				response.Body.Close()
 				return 1, err
 			}
+			previousBody = strings.Contains(responseSelection, "b")
 		}
 		if !redirect && !digest {
 			code := 0
@@ -252,13 +276,6 @@ func exchange(ctx context.Context, t *transport, r *request, s *session, auth au
 			}
 			return code, nil
 		}
-		if history && !out.tty && strings.Contains(selection, "b") && strings.ContainsAny(selection, "HB") {
-			if _, err = io.WriteString(out.writer, "\n\n"); err != nil {
-				t.Close()
-				response.Body.Close()
-				return 1, err
-			}
-		}
 		_, err = io.Copy(io.Discard, response.Body)
 		response.Body.Close()
 		if err != nil {
@@ -275,10 +292,7 @@ func exchange(ctx context.Context, t *transport, r *request, s *session, auth au
 			r.setHeader("Authorization", value)
 			digestTried = true
 		} else {
-			redirects++
-			if max := o.integer("max-redirects"); max > 0 && redirects >= max {
-				return 6, fmt.Errorf("too many redirects (--max-redirects=%d)", max)
-			}
+			digestTried = false
 			next, e := r.URL.Parse(response.Header.Get("Location"))
 			if e != nil {
 				return 1, e
@@ -308,7 +322,9 @@ func exchange(ctx context.Context, t *transport, r *request, s *session, auth au
 				}
 			}
 			r.URL = next
-			r.setHeader("Host", next.Host)
+			if r.defaultHost {
+				r.setHeader("Host", next.Host)
+			}
 		}
 		r.deleteHeader("Cookie")
 		if cookie := s.cookiesFor(r.URL); cookie != "" {

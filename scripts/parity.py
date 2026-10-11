@@ -71,6 +71,13 @@ class Server(http.server.BaseHTTPRequestHandler):
         elif self.path == '/loop':
             status = 302
             headers['Location'] = '/loop'
+        elif self.path == '/digest':
+            payload = b'ok'
+            content_type = 'text/plain'
+            if not self.headers.get('Authorization', '').startswith('Digest '):
+                status = 401
+                headers['WWW-Authenticate'] = 'Digest realm="test", nonce="fixed", qop="auth", algorithm=MD5'
+                payload = b'challenge'
         elif self.path.startswith('/set-cookie'):
             headers['Set-Cookie'] = self.headers.get('X-Set-Cookie', '')
         elif self.path == '/cookies':
@@ -270,6 +277,14 @@ def main():
     for status in [301, 302, 303, 307, 308]:
         for flags in [[], ['-F'], ['-Fv'], ['-F', '--all', '--history-print=h']]:
             add('redirect ' + str(status) + str(flags), ['-I', *flags, url + '/redirect/' + str(status), 'a=1'])
+    for flags in [['-v'], ['-pH'], ['-pB'], ['-pHBhb'], ['--all', '-pH'], ['--all', '-pB']]:
+        add('redirect request output ' + repr(flags), ['-I', '-F', *flags, url + '/redirect/302', 'data=yes'])
+    for flags in [[], ['-v'], ['-pH'], ['--all'], ['--all', '-pHBhb']]:
+        add('digest handshake output ' + repr(flags), ['-I', '-Adigest', '-au:p', *flags, url + '/digest'])
+    add('redirect custom Host', ['-I', '-F', url + '/redirect/302', 'Host:custom.example'])
+    add('redirect deleted Host', ['-I', '-F', '-pH', url + '/redirect/302', 'Host:'])
+    add('redirect limit without follow', ['-I', '--max-redirects=1', url + '/redirect/302'])
+    add('failed connection request output', ['-I', '-v', '--timeout=.2', 'http://127.0.0.1:1'])
     add('folded response headers', ['-I', '-h', url + '/folded'])
     add('folded header count exact', ['-I', '--max-headers=4', url + '/folded'])
     add('folded header count too small', ['-I', '--max-headers=3', url + '/folded'])

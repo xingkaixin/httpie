@@ -192,6 +192,9 @@ func (s *session) apply(r *request, o options) {
 		if explicit[key] {
 			continue
 		}
+		if key == "host" {
+			r.defaultHost = false
+		}
 		count := len(r.headers)
 		if seen[key] {
 			r.headers = append(r.headers, h)

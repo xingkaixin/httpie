@@ -20,8 +20,9 @@ type header struct {
 }
 type request struct {
 	*http.Request
-	headers []header
-	removed map[string]bool
+	headers     []header
+	removed     map[string]bool
+	defaultHost bool
 }
 
 func (r *request) setHeader(name, value string) {
@@ -383,6 +384,7 @@ func buildRequest(o options, program string, stdin io.Reader, stdinTTY bool) (*r
 			i++
 		}
 	}
+	r.defaultHost = !seen["host"] && !removed["host"]
 	return r, cleanup, nil
 }
 

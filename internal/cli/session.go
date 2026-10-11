@@ -298,10 +298,7 @@ func (s *session) cookiesFor(u *url.URL) string {
 		}
 		if c.Domain != nil && *c.Domain != "" {
 			domain := strings.TrimPrefix(*c.Domain, ".")
-			host := u.Hostname()
-			if !strings.ContainsAny(host, ".:") {
-				host += ".local"
-			}
+			host := cookieHost(u)
 			if host != domain && !strings.HasSuffix(host, "."+domain) {
 				continue
 			}
@@ -317,20 +314,26 @@ func (s *session) cookiesFor(u *url.URL) string {
 	}
 	return strings.Join(pairs, "; ")
 }
+
+// cookieHost mirrors Python's http.cookiejar, which keeps IPv6 brackets and suffixes dotless hosts with ".local".
+func cookieHost(u *url.URL) string {
+	host := u.Hostname()
+	if strings.Contains(host, ":") {
+		host = "[" + host + "]"
+	}
+	if !strings.Contains(host, ".") {
+		host += ".local"
+	}
+	return host
+}
 func (s *session) receiveCookies(cookies []*http.Cookie, u *url.URL) {
+	host := cookieHost(u)
 	for _, c := range cookies {
 		domain := c.Domain
 		if domain == "" {
-			domain = u.Hostname()
-			if !strings.Contains(domain, ".") && !strings.Contains(domain, ":") {
-				domain += ".local"
-			}
+			domain = host
 		} else {
 			domain = "." + strings.TrimPrefix(strings.ToLower(domain), ".")
-		}
-		host := u.Hostname()
-		if !strings.Contains(host, ".") && !strings.Contains(host, ":") {
-			host += ".local"
 		}
 		if strings.TrimPrefix(domain, ".") != host && !strings.HasSuffix(host, "."+strings.TrimPrefix(domain, ".")) {
 			continue

@@ -68,14 +68,6 @@ func run(program string, args []string, stdin io.Reader, stdout, stderr io.Write
 		_, err = io.WriteString(stdout, text)
 		return 0, err
 	}
-	if o.value("auth-type") == "?" {
-		_, err = fmt.Fprintln(stdout, "basic: Basic HTTP auth\nbearer: Bearer HTTP Auth\ndigest: Digest HTTP auth")
-		return 0, err
-	}
-	if o.value("style") == "?" {
-		_, err = fmt.Fprintln(stdout, strings.Join(availableStyles(), ", "))
-		return 0, err
-	}
 	if o.has("debug") {
 		fmt.Fprintf(stderr, "HTTPie %s\nGo %s\nPlatform %s/%s\nConfig directory: %s\n", version, runtime.Version(), runtime.GOOS, runtime.GOARCH, configDir())
 	}

@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
@@ -168,6 +169,9 @@ func (t *transport) connect(ctx context.Context, u, proxyURL *url.URL) error {
 	}
 	t.Close()
 	seconds, _ := strconv.ParseFloat(t.options.value("timeout"), 64)
+	if seconds < 0 || math.IsNaN(seconds) || math.IsInf(seconds, 0) {
+		return fmt.Errorf("invalid timeout: %s", t.options.value("timeout"))
+	}
 	timeout := time.Duration(seconds * float64(time.Second))
 	dialer := &idleDialer{Dialer: net.Dialer{Timeout: timeout}}
 	destination := address(u)
@@ -344,7 +348,7 @@ func (t *transport) send(ctx context.Context, r *request) (*http.Response, []hea
 			if len(line) > 65536 {
 				return nil, nil, fmt.Errorf("response header line exceeds 65536 bytes")
 			}
-			if max := t.options.integer("max-headers"); max > 0 && lineNumber > max {
+			if max := t.options.integer("max-headers"); max != 0 && lineNumber > max {
 				return nil, nil, fmt.Errorf("got more than %d headers", max)
 			}
 			raw.WriteString(line)

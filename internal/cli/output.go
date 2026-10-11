@@ -29,13 +29,6 @@ type output struct {
 }
 
 func newOutput(w io.Writer, tty bool, o options) (*output, error) {
-	if o.has("style") {
-		names := availableStyles()
-		i := sort.SearchStrings(names, o.value("style"))
-		if i == len(names) || names[i] != o.value("style") {
-			return nil, fmt.Errorf("invalid style: %s", o.value("style"))
-		}
-	}
 	p := o.value("pretty")
 	if p == "" {
 		p = "none"
@@ -55,7 +48,7 @@ func newOutput(w io.Writer, tty bool, o options) (*output, error) {
 			}
 			if strings.HasSuffix(k, "indent") {
 				n, err := strconv.Atoi(v)
-				if err != nil || n < 0 {
+				if err != nil || n < 0 || strings.Trim(v, "0123456789") != "" {
 					return nil, fmt.Errorf("invalid indent: %s", v)
 				}
 			} else if v != "true" && v != "false" {
@@ -63,14 +56,6 @@ func newOutput(w io.Writer, tty bool, o options) (*output, error) {
 			}
 			f[k] = v
 		}
-	}
-	if o.has("response-charset") {
-		if textEncoding(o.value("response-charset")) == nil {
-			return nil, fmt.Errorf("unknown encoding: %s", o.value("response-charset"))
-		}
-	}
-	if o.has("response-mime") && !strings.Contains(o.value("response-mime"), "/") {
-		return nil, fmt.Errorf("invalid MIME type: %s", o.value("response-mime"))
 	}
 	return &output{writer: w, tty: tty, options: o, pretty: p, format: f}, nil
 }

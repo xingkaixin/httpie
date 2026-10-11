@@ -2,6 +2,9 @@ package cli
 
 import (
 	"fmt"
+	"os"
+	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -20,7 +23,7 @@ var optionSpecs = []optionSpec{
 	{"raw", "", "", "value", "", "Raw request body"},
 	{"compress", "x", "", "count", "", "Compress request with deflate; repeat to force"},
 	{"pretty", "", "", "value", "", "Output processing: all, colors, format, none"},
-	{"style", "s", "", "optional", "auto", "Output color style"},
+	{"style", "s", "", "value", "auto", "Output color style"},
 	{"unsorted", "", "format-options", "const", "", "Disable output sorting"},
 	{"sorted", "", "format-options", "const", "", "Enable output sorting"},
 	{"no-unsorted", "", "format-options", "const", "", "Enable output sorting"},
@@ -43,7 +46,7 @@ var optionSpecs = []optionSpec{
 	{"session", "", "", "value", "", "Read and update a session"},
 	{"session-read-only", "", "", "value", "", "Read a session without updating it"},
 	{"auth", "a", "", "value", "", "USER[:PASS] or bearer TOKEN"},
-	{"auth-type", "A", "", "optional", "", "Authentication: basic, digest, bearer"},
+	{"auth-type", "A", "", "value", "", "Authentication: basic, digest, bearer"},
 	{"ignore-netrc", "", "", "bool", "", "Ignore .netrc credentials"},
 	{"offline", "", "", "bool", "", "Build and print the request without sending"},
 	{"proxy", "", "", "append", "", "PROTOCOL:PROXY_URL"},
@@ -67,6 +70,12 @@ var optionSpecs = []optionSpec{
 	{"traceback", "", "", "bool", "", "Show diagnostics on failure"},
 	{"default-scheme", "", "", "value", "http", "Default URL scheme"},
 	{"debug", "", "", "bool", "", "Show diagnostic information"},
+}
+
+var negativeArgument = regexp.MustCompile(`^-([0-9]+|[0-9]*\.[0-9]+)$`)
+
+func optionLike(value string) bool {
+	return len(value) > 1 && value[0] == '-' && !negativeArgument.MatchString(value)
 }
 
 type options struct {
@@ -108,7 +117,7 @@ func parseOptions(args []string) (options, error) {
 		name, value, supplied := strings.Cut(strings.TrimPrefix(arg, "--"), "=")
 		if !long {
 			name = arg[1:2]
-			value = arg[2:]
+			value = strings.TrimPrefix(arg[2:], "=")
 			supplied = value != ""
 		}
 		var spec *optionSpec
@@ -150,13 +159,12 @@ func parseOptions(args []string) (options, error) {
 			return o, fmt.Errorf("unrecognized arguments: %s", arg)
 		}
 		switch spec.kind {
-		case "value", "append", "int", "float", "optional":
+		case "value", "append", "int", "float":
 			if !supplied {
-				if i+1 < len(args) && (spec.kind != "optional" || !strings.HasPrefix(args[i+1], "-")) {
+				if i+1 < len(args) && !optionLike(args[i+1]) {
 					i++
 					value = args[i]
-				} else if spec.kind == "optional" {
-					value = "?"
+
 				} else {
 					return o, fmt.Errorf("argument --%s: expected one argument", spec.name)
 				}
@@ -167,9 +175,12 @@ func parseOptions(args []string) (options, error) {
 				}
 			}
 			if spec.kind == "float" {
-				if n, err := strconv.ParseFloat(value, 64); err != nil || n < 0 {
+				if _, err := strconv.ParseFloat(value, 64); err != nil {
 					return o, fmt.Errorf("invalid timeout: %s", value)
 				}
+			}
+			if err := validateOption(spec.name, value); err != nil {
+				return o, err
 			}
 		default:
 			if supplied && long {
@@ -179,6 +190,9 @@ func parseOptions(args []string) (options, error) {
 				args = append(args[:i+1], append([]string{"-" + value}, args[i+1:]...)...)
 			}
 			value = spec.name
+		}
+		if spec.name == "session" && o.has("session-read-only") || spec.name == "session-read-only" && o.has("session") {
+			return o, fmt.Errorf("--session and --session-read-only are mutually exclusive")
 		}
 		dest := spec.dest
 		if dest == "" {
@@ -238,6 +252,45 @@ func (o options) validate() error {
 	}
 	if o.has("compress") && (o.has("chunked") || o.value("request-type") == "multipart") {
 		return fmt.Errorf("cannot combine --compress and --chunked/--multipart")
+	}
+	return nil
+}
+
+func validateOption(name, value string) error {
+	var choices []string
+	switch name {
+	case "pretty":
+		choices = []string{"all", "colors", "format", "none"}
+	case "style":
+		choices = availableStyles()
+	case "auth-type":
+		choices = []string{"basic", "bearer", "digest"}
+	case "ssl":
+		choices = []string{"ssl2.3", "tls1", "tls1.1", "tls1.2", "tls1.3"}
+	case "session", "session-read-only":
+		_, err := sessionPath("", value)
+		return err
+	case "response-charset":
+		if textEncoding(value) == nil {
+			return fmt.Errorf("unknown encoding: %s", value)
+		}
+	case "response-mime":
+		if strings.Count(value, "/") != 1 {
+			return fmt.Errorf("invalid MIME type: %s", value)
+		}
+	case "cert", "cert-key":
+		f, err := os.Open(value)
+		if err != nil {
+			return err
+		}
+		return f.Close()
+	case "proxy":
+		if !strings.Contains(value, ":") {
+			return fmt.Errorf("invalid proxy specification: %s", value)
+		}
+	}
+	if choices != nil && !slices.Contains(choices, value) {
+		return fmt.Errorf("invalid --%s: %s", name, value)
 	}
 	return nil
 }

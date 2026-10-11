@@ -218,7 +218,8 @@ func decodedBody(r *http.Response) (io.Reader, func(), error) {
 				return nil, func() {}, err
 			}
 			var z io.ReadCloser
-			if (int(prefix[0])*256+int(prefix[1]))%31 == 0 {
+			// Raw deflate can pass the zlib check bits alone, so also require the deflate method and a valid window.
+			if prefix[0]&0x0f == 8 && prefix[0]>>4 <= 7 && (int(prefix[0])*256+int(prefix[1]))%31 == 0 {
 				z, err = zlib.NewReader(b)
 			} else {
 				z = flate.NewReader(b)

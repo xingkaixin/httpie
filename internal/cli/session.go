@@ -196,17 +196,17 @@ func (s *session) apply(r *request, o options) {
 		}
 	}
 }
-func (s *session) credentials() (string, string) {
-	kind, _ := s.auth["type"].(string)
-	if kind == "" {
-		return "", ""
-	}
+func (s *session) credentials() authentication {
+	a := authentication{}
+	a.kind, _ = s.auth["type"].(string)
 	if raw, ok := s.auth["raw_auth"].(string); ok {
-		return kind, raw
+		a.raw = raw
+		a.username, a.password, _ = splitCredentials(raw)
+	} else {
+		a.username, _ = s.auth["username"].(string)
+		a.password, _ = s.auth["password"].(string)
 	}
-	user, _ := s.auth["username"].(string)
-	pass, _ := s.auth["password"].(string)
-	return kind, user + ":" + pass
+	return a
 }
 func (s *session) updateHeaders(r *request, o options) {
 	headers := []header{}

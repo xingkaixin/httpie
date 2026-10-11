@@ -10,7 +10,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
-	"path/filepath"
 	"regexp"
 	"runtime"
 	"strings"
@@ -33,125 +32,111 @@ func readPassword(prompt string) (string, error) {
 	fmt.Fprintln(os.Stderr)
 	return string(password), err
 }
-func authCredentials(o options, r *request) (string, string, error) {
-	kind := o.value("auth-type")
-	if kind == "" {
-		kind = "basic"
-	}
-	raw := o.value("auth")
-	provided := o.has("auth")
-	if !provided && !o.has("auth-type") && r.URL.User != nil {
-		pass, _ := r.URL.User.Password()
-		raw = r.URL.User.Username() + ":" + pass
-		provided = true
-	}
-	if !provided && !o.has("ignore-netrc") && kind != "bearer" {
-		raw, provided = netrcAuth(r.URL.Hostname())
-	}
-	r.URL.User = nil
-	if !provided {
-		if o.has("auth-type") {
-			return "", "", fmt.Errorf("--auth required")
-		}
-		return "", "", nil
-	}
-	if kind == "bearer" {
-		return kind, raw, nil
-	}
-	username, password, ok := strings.Cut(raw, ":")
-	if !ok {
-		if o.has("ignore-stdin") {
-			return "", "", fmt.Errorf("unable to prompt for passwords because --ignore-stdin is set")
-		}
-		var err error
-		password, err = readPassword(fmt.Sprintf("http: password for %s@%s: ", username, r.URL.Host))
-		if err != nil {
-			return "", "", err
-		}
-	}
-	return kind, username + ":" + password, nil
-}
-func applyAuth(r *request, kind, raw string) {
-	switch kind {
-	case "basic":
-		r.setHeader("Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(raw)))
-	case "bearer":
-		r.setHeader("Authorization", "Bearer "+raw)
-	}
-	if kind != "basic" && kind != "bearer" {
-		return
-	}
-	r.moveHeaderBefore("Authorization", "User-Agent")
+
+type authentication struct {
+	kind, raw, username, password string
+	latin1                        bool
 }
 
-var netrcToken = regexp.MustCompile(`"(?:[^"\\]|\\.)*"|'[^']*'|[^\s]+`)
-
-func netrcAuth(host string) (string, bool) {
-	filename := os.Getenv("NETRC")
-	if filename == "" {
-		home, _ := os.UserHomeDir()
-		filename = filepath.Join(home, ".netrc")
-		if _, err := os.Stat(filename); os.IsNotExist(err) {
-			filename = filepath.Join(home, "_netrc")
-		}
-	}
-	data, err := os.ReadFile(filename)
-	if err != nil {
-		return "", false
-	}
-	var lines []string
-	for _, line := range strings.Split(string(data), "\n") {
-		line, _, _ = strings.Cut(line, "#")
-		lines = append(lines, line)
-	}
-	tokens := netrcToken.FindAllString(strings.Join(lines, "\n"), -1)
-	machine, user, pass := "", "", ""
-	fallback := ""
-	save := func() (string, bool) {
-		if machine == host {
-			return user + ":" + pass, true
-		}
-		if machine == "default" {
-			fallback = user + ":" + pass
-		}
-		return "", false
-	}
-	for i := 0; i < len(tokens); i++ {
-		token := tokens[i]
-		if token == "machine" || token == "default" {
-			if value, ok := save(); ok {
-				return value, true
-			}
-			user = ""
-			pass = ""
-			machine = "default"
-			if token == "machine" && i+1 < len(tokens) {
+func splitCredentials(raw string) (string, string, bool) {
+	var username, password strings.Builder
+	part := &username
+	found := false
+	for i := 0; i < len(raw); i++ {
+		if raw[i] == '\\' && i+1 < len(raw) {
+			if raw[i+1] == ':' {
 				i++
-				machine = tokens[i]
+				part.WriteByte(':')
+				continue
 			}
+			part.WriteByte(raw[i])
+			i++
+		} else if raw[i] == ':' && !found {
+			part = &password
+			found = true
 			continue
 		}
-		if i+1 >= len(tokens) {
-			break
+		part.WriteByte(raw[i])
+	}
+	if !found {
+		return raw, "", false
+	}
+	return username.String(), password.String(), true
+}
+
+func authCredentials(o options, r *request) (authentication, error) {
+	a := authentication{kind: o.value("auth-type"), raw: o.value("auth")}
+	provided := o.has("auth")
+	parsed := false
+	defer func() { r.URL.User = nil }()
+	if !provided && a.kind == "" && r.URL.User != nil {
+		a.username = r.URL.User.Username()
+		a.password, _ = r.URL.User.Password()
+		a.raw = a.username + ":" + a.password
+		provided, parsed = true, true
+	}
+	if a.kind == "" {
+		a.kind = "basic"
+	}
+	if !provided && o.has("auth-type") && !o.has("ignore-netrc") && a.kind != "bearer" {
+		a.username, a.password, provided = netrcAuth(r.URL.Hostname())
+		a.raw = a.username + ":" + a.password
+		parsed = provided
+	}
+	if !provided {
+		if o.has("auth-type") {
+			return authentication{}, fmt.Errorf("--auth required")
 		}
-		switch token {
-		case "login", "account":
-			i++
-			user = strings.Trim(tokens[i], "\"'")
-		case "password":
-			i++
-			pass = strings.Trim(tokens[i], "\"'")
+		return authentication{}, nil
+	}
+	if a.kind == "bearer" {
+		return a, nil
+	}
+	if !parsed {
+		var hasPassword bool
+		a.username, a.password, hasPassword = splitCredentials(a.raw)
+		if !hasPassword {
+			if o.has("ignore-stdin") {
+				return a, fmt.Errorf("unable to prompt for passwords because --ignore-stdin is set")
+			}
+			var err error
+			a.password, err = readPassword(fmt.Sprintf("http: password for %s@%s: ", a.username, r.URL.Host))
+			if err != nil {
+				return a, err
+			}
 		}
 	}
-	if value, ok := save(); ok {
-		return value, true
+	if a.username != "" && a.password != "" {
+		a.raw = a.username + ":" + a.password
 	}
-	return fallback, fallback != ""
+	return a, nil
+}
+func applyAuth(r *request, a authentication) error {
+	switch a.kind {
+	case "basic":
+		credentials := []byte(a.username + ":" + a.password)
+		if a.latin1 {
+			credentials = nil
+			for _, c := range a.username + ":" + a.password {
+				if c > 255 {
+					return fmt.Errorf("netrc credentials cannot be encoded as latin-1")
+				}
+				credentials = append(credentials, byte(c))
+			}
+		}
+		r.setHeader("Authorization", "Basic "+base64.StdEncoding.EncodeToString(credentials))
+	case "bearer":
+		r.setHeader("Authorization", "Bearer "+a.raw)
+	default:
+		return nil
+	}
+	r.moveHeaderBefore("Authorization", "User-Agent")
+	return nil
 }
 
 var digestField = regexp.MustCompile(`([\w-]+)\s*=\s*(?:"((?:[^"\\]|\\.)*)"|([^,\s]+))`)
 
-func digestAuthorization(challenge, method, uri, credentials string) (string, error) {
+func digestAuthorization(challenge, method, uri string, auth authentication) (string, error) {
 	fields := map[string]string{}
 	for _, m := range digestField.FindAllStringSubmatch(challenge, -1) {
 		v := m[2]
@@ -181,7 +166,7 @@ func digestAuthorization(challenge, method, uri, credentials string) (string, er
 		}
 		return ""
 	}
-	username, password, _ := strings.Cut(credentials, ":")
+	username, password := auth.username, auth.password
 	nonce := make([]byte, 16)
 	if _, err := rand.Read(nonce); err != nil {
 		return "", err

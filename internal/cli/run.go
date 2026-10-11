@@ -127,21 +127,28 @@ func run(program string, args []string, stdin io.Reader, stdout, stderr io.Write
 		}
 		s.apply(req, o)
 	}
-	kind, credentials, err := authCredentials(o, req)
+	auth, err := authCredentials(o, req)
 	if err != nil {
 		return 1, err
 	}
 	if s.path != "" {
-		if kind == "" {
-			kind, credentials = s.credentials()
+		if auth.kind == "" {
+			auth = s.credentials()
 		} else {
-			s.auth = map[string]any{"type": kind, "raw_auth": credentials}
+			s.auth = map[string]any{"type": auth.kind, "raw_auth": auth.raw}
 		}
 		s.updateHeaders(req, o)
 	}
-	applyAuth(req, kind, credentials)
-	if kind != "" && kind != "basic" && kind != "digest" && kind != "bearer" {
-		return 1, fmt.Errorf("unsupported session authentication type: %s", kind)
+	if auth.kind == "" && !o.has("ignore-netrc") {
+		if user, password, ok := netrcAuth(req.URL.Hostname()); ok {
+			auth = authentication{kind: "basic", username: user, password: password, latin1: true}
+		}
+	}
+	if err = applyAuth(req, auth); err != nil {
+		return 1, err
+	}
+	if auth.kind != "" && auth.kind != "basic" && auth.kind != "digest" && auth.kind != "bearer" {
+		return 1, fmt.Errorf("unsupported session authentication type: %s", auth.kind)
 	}
 	if cookie := s.cookiesFor(req.URL); cookie != "" && req.Header.Get("Cookie") == "" {
 		req.setHeader("Cookie", cookie)
@@ -172,7 +179,7 @@ func run(program string, args []string, stdin io.Reader, stdout, stderr io.Write
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-	code, err = exchange(ctx, transport, req, s, kind, credentials, out, stdout, stderr, stdoutTTY, resume)
+	code, err = exchange(ctx, transport, req, s, auth, out, stdout, stderr, stdoutTTY, resume)
 	if ctx.Err() != nil {
 		return 130, nil
 	}
@@ -190,7 +197,7 @@ func run(program string, args []string, stdin io.Reader, stdout, stderr io.Write
 	}
 	return code, err
 }
-func exchange(ctx context.Context, t *transport, r *request, s *session, kind, credentials string, out *output, stdout, stderr io.Writer, stdoutTTY bool, resume int64) (int, error) {
+func exchange(ctx context.Context, t *transport, r *request, s *session, auth authentication, out *output, stdout, stderr io.Writer, stdoutTTY bool, resume int64) (int, error) {
 	o := out.options
 	follow := o.has("follow") || o.has("download")
 	history := o.has("all") || o.has("verbose")
@@ -205,7 +212,7 @@ func exchange(ctx context.Context, t *transport, r *request, s *session, kind, c
 		}
 		s.receiveCookies(response.Cookies(), r.URL)
 		redirect := follow && response.Header.Get("Location") != "" && (response.StatusCode == 301 || response.StatusCode == 302 || response.StatusCode == 303 || response.StatusCode == 307 || response.StatusCode == 308)
-		digest := kind == "digest" && !digestTried && response.StatusCode == 401 && strings.HasPrefix(strings.ToLower(response.Header.Get("WWW-Authenticate")), "digest ")
+		digest := auth.kind == "digest" && !digestTried && response.StatusCode == 401 && strings.HasPrefix(strings.ToLower(response.Header.Get("WWW-Authenticate")), "digest ")
 		selection := out.selection()
 		if history || (!redirect && !digest) {
 			if err = out.writeRequest(r, selection); err == nil && !out.tty && strings.Contains(selection, "B") && strings.ContainsAny(selection, "hbm") {
@@ -267,7 +274,7 @@ func exchange(ctx context.Context, t *transport, r *request, s *session, kind, c
 			t.Close()
 		}
 		if digest {
-			value, e := digestAuthorization(response.Header.Get("WWW-Authenticate"), r.Method, r.URL.RequestURI(), credentials)
+			value, e := digestAuthorization(response.Header.Get("WWW-Authenticate"), r.Method, r.URL.RequestURI(), auth)
 			if e != nil {
 				return 1, e
 			}
@@ -291,7 +298,7 @@ func exchange(ctx context.Context, t *transport, r *request, s *session, kind, c
 			}
 			if stripAuth {
 				r.deleteHeader("Authorization")
-				kind = ""
+				auth.kind = ""
 			}
 			status := response.StatusCode
 			if status == 303 && r.Method != "HEAD" || status == 302 && r.Method != "HEAD" || status == 301 && r.Method == "POST" {

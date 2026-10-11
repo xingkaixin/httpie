@@ -73,6 +73,28 @@ def main():
                                            'auth': {'type': None}}))
             run(['-I', '--offline', '--pretty=none', '--session=' + str(session), 'example.org'])
             records.append(json.loads(session.read_text()))
+            env['NETRC'] = str(directory / 'netrc')
+            for contents in [
+                'machine example.org login user account acct password pass',
+                'machine example.org account acct login user password pass',
+                r'machine example.org login "user#name" password "pa\ss"',
+                r'machine example.org login "user name" password "pa\"ss"',
+                'machine example.org login user password pass\nmachine example.org login second password other',
+                'machine example.org login user password pass\ninvalid garbage',
+                'machine example.org login user password pass\nmacdef foo\nlogin wrong password wrong\n\n',
+                'default login fallback password secret',
+                'machine example.org user café password pâté',
+            ]:
+                Path(env['NETRC']).write_text(contents)
+                for flags in [[], ['--auth-type=basic'], ['--ignore-netrc']]:
+                    run(['-I', '--offline', *flags, 'example.org'])
+            session.unlink()
+            run(['-I', '--offline', '--session=' + str(session), 'example.org'])
+            records.append(json.loads(session.read_text()))
+            run(['-I', '--offline', '--session=' + str(session), '-aexplicit:secret', 'example.org'])
+            run(['-I', '--offline', '--session=' + str(session), 'example.org'])
+            records.append(json.loads(session.read_text()))
+            Path(env['NETRC']).unlink()
             manager = ROOT / folder / 'httpie'
             for words in [['cli', 'export-args'], ['cli', 'export-args', '--help'], ['cli', 'check-updates', '--help'],
                           ['cli', 'sessions', '--help'], ['cli', 'sessions', 'upgrade', '--help'], ['cli', 'sessions', 'upgrade-all', '--help']]:

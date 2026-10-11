@@ -81,6 +81,15 @@ func buildRequest(o options, program string, stdin io.Reader, stdinTTY bool) (*r
 	if err != nil {
 		return fail(err)
 	}
+	if u.User != nil {
+		authority := strings.SplitN(rawURL, "://", 2)[1]
+		if end := strings.IndexAny(authority, "/?#"); end >= 0 {
+			authority = authority[:end]
+		}
+		userinfo := authority[:strings.LastIndex(authority, "@")]
+		username, password, _ := strings.Cut(userinfo, ":")
+		u.User = url.UserPassword(username, password)
+	}
 	if u.Host == "" {
 		return fail(fmt.Errorf("invalid URL: %s", rawURL))
 	}

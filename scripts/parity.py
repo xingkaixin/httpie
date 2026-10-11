@@ -197,6 +197,10 @@ def main():
     for number in ['1e3', '1e16', '1e-5', '1.23456789123456789', '-0.0', '-0', 'NaN', 'Infinity', '-Infinity', '1e999']:
         for flags in [[], ['--pretty=format'], ['-f']]:
             add('JSON number ' + number + str(flags), ['-I', '--offline', *flags, 'example.org', 'n:=' + number])
+    for credentials in [r'u:p\:x', r'u\:x:p', r'u\\:p', r'u:p\\x', r'u:p\@x', ':', '', r'u\:p']:
+        add('escaped auth ' + repr(credentials), ['-I', '--offline', '-a', credentials, 'example.org'])
+    for target in ['http://u%3Ax:p%40x@example.org', 'http://u:p%2fx@example.org']:
+        add('encoded URL auth ' + target, ['-I', '--offline', target])
     add('explicit Authorization with auth', ['-I', '--offline', '-auser:pass', 'example.org', 'Authorization:old', 'X-Test:yes'])
     add('JSON input duplicate keys', ['-I', '--offline', 'example.org', 'a:={"x":1,"x":2}'])
     for method in ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']:

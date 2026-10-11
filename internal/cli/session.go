@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"runtime"
 	"slices"
+	"sort"
 	"strings"
 	"time"
 )
@@ -87,6 +88,9 @@ func (c *storedCookie) UnmarshalJSON(data []byte) error {
 	value := cookieJSON{Path: "/", Domain: &domain}
 	if err := json.Unmarshal(data, &value); err != nil {
 		return err
+	}
+	if value.Domain != nil {
+		*value.Domain = strings.ToLower(*value.Domain)
 	}
 	*c = storedCookie(value)
 	return nil
@@ -167,6 +171,11 @@ func loadSession(host, name string) (*session, error) {
 			return nil, err
 		}
 	}
+	cookies := s.cookies
+	s.cookies = []storedCookie{}
+	for _, c := range cookies {
+		s.setCookie(c)
+	}
 	return s, nil
 }
 func (s *session) apply(r *request, o options) {
@@ -208,7 +217,7 @@ func (s *session) credentials() authentication {
 	}
 	return a
 }
-func (s *session) updateHeaders(r *request, o options) {
+func (s *session) updateHeaders(r *request, o options) error {
 	headers := []header{}
 	custom := map[string]bool{}
 	for _, arg := range o.args {
@@ -224,8 +233,13 @@ func (s *session) updateHeaders(r *request, o options) {
 			continue
 		}
 		if key == "cookie" {
-			req := &http.Request{Header: http.Header{"Cookie": []string{h.Value}}}
-			s.receiveCookies(req.Cookies(), r.URL)
+			cookies, err := parseSessionCookies(h.Value)
+			if err != nil {
+				return err
+			}
+			for _, c := range cookies {
+				s.setCookie(c)
+			}
 			continue
 		}
 		if strings.HasPrefix(key, "content-") || strings.HasPrefix(key, "if-") || key == "user-agent" && strings.HasPrefix(h.Value, "HTTPie/") {
@@ -240,13 +254,19 @@ func (s *session) updateHeaders(r *request, o options) {
 		}
 	}
 	s.headers = headers
+	if custom["cookie"] {
+		r.deleteHeader("Cookie")
+	}
+	return nil
 }
 func (s *session) cookiesFor(u *url.URL) string {
 	now := time.Now().Unix()
 	s.cookies = slices.DeleteFunc(s.cookies, func(c storedCookie) bool { return c.Expires != nil && *c.Expires <= now })
+	cookies := slices.Clone(s.cookies)
+	sort.SliceStable(cookies, func(i, j int) bool { return len(cookies[i].Path) > len(cookies[j].Path) })
 	var pairs []string
-	for _, c := range s.cookies {
-		if c.Secure && u.Scheme != "https" {
+	for _, c := range cookies {
+		if c.Secure && u.Scheme != "https" && u.Hostname() != "localhost" && !strings.HasSuffix(u.Hostname(), ".localhost") {
 			continue
 		}
 		if c.Domain != nil && *c.Domain != "" {
@@ -263,7 +283,7 @@ func (s *session) cookiesFor(u *url.URL) string {
 		if p == "" {
 			p = "/"
 		}
-		if u.Path != p && !strings.HasPrefix(u.Path, strings.TrimSuffix(p, "/")+"/") {
+		if path := u.EscapedPath(); path != p && !strings.HasPrefix(path, strings.TrimSuffix(p, "/")+"/") {
 			continue
 		}
 		pairs = append(pairs, c.Name+"="+c.Value)
@@ -278,6 +298,8 @@ func (s *session) receiveCookies(cookies []*http.Cookie, u *url.URL) {
 			if !strings.Contains(domain, ".") && !strings.Contains(domain, ":") {
 				domain += ".local"
 			}
+		} else {
+			domain = "." + strings.TrimPrefix(strings.ToLower(domain), ".")
 		}
 		host := u.Hostname()
 		if !strings.Contains(host, ".") && !strings.Contains(host, ":") {
@@ -289,8 +311,8 @@ func (s *session) receiveCookies(cookies []*http.Cookie, u *url.URL) {
 		p := c.Path
 		if p == "" {
 			p = "/"
-			if slash := strings.LastIndex(u.Path, "/"); slash > 0 {
-				p = u.Path[:slash]
+			if slash := strings.LastIndex(u.EscapedPath(), "/"); slash > 0 {
+				p = u.EscapedPath()[:slash]
 			}
 		}
 		cookie := storedCookie{Name: c.Name, Value: c.Value, Domain: &domain, Path: p, Secure: c.Secure}
@@ -302,17 +324,13 @@ func (s *session) receiveCookies(cookies []*http.Cookie, u *url.URL) {
 			v := time.Now().Unix() + int64(c.MaxAge)
 			cookie.Expires = &v
 		}
-		for i := 0; i < len(s.cookies); i++ {
-			old := s.cookies[i]
-			if old.Name == c.Name && old.Domain != nil && *old.Domain == domain && old.Path == p {
-				s.cookies = append(s.cookies[:i], s.cookies[i+1:]...)
-				i--
-			}
-		}
 		if c.MaxAge < 0 || cookie.Expires != nil && *cookie.Expires <= time.Now().Unix() {
+			s.cookies = slices.DeleteFunc(s.cookies, func(old storedCookie) bool {
+				return old.Name == c.Name && cookieDomain(old) == domain && old.Path == p
+			})
 			continue
 		}
-		s.cookies = append(s.cookies, cookie)
+		s.setCookie(cookie)
 	}
 }
 func (s *session) save() error {

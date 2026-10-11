@@ -137,7 +137,9 @@ func run(program string, args []string, stdin io.Reader, stdout, stderr io.Write
 		} else {
 			s.auth = map[string]any{"type": auth.kind, "raw_auth": auth.raw}
 		}
-		s.updateHeaders(req, o)
+		if err = s.updateHeaders(req, o); err != nil {
+			return 1, err
+		}
 	}
 	if auth.kind == "" && !o.has("ignore-netrc") {
 		if user, password, ok := netrcAuth(req.URL.Hostname()); ok {

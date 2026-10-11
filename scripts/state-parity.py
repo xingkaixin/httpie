@@ -73,6 +73,37 @@ def main():
                                            'auth': {'type': None}}))
             run(['-I', '--offline', '--pretty=none', '--session=' + str(session), 'example.org'])
             records.append(json.loads(session.read_text()))
+            def cookie_case(cookies, target, items=()):
+                session.write_text(json.dumps({'cookies': cookies, 'headers': [], 'auth': {'type': None}}))
+                run(['-I', '--offline', '--session=' + str(session), target, *items])
+                records.append(json.loads(session.read_text())['cookies'])
+
+            for host in ['localhost', 'foo.localhost', '127.0.0.1', 'example.org']:
+                cookie_case([{'name': 'secure', 'value': 'yes', 'secure': True}], 'http://' + host)
+            for path in ['/', '/nested', '/nested/', '/nes', '/n%20a', '/n a']:
+                cookie_case([
+                    {'name': 'root', 'value': 'a', 'path': '/'},
+                    {'name': 'nested', 'value': 'b', 'path': '/nested'},
+                    {'name': 'sub', 'value': 'c', 'path': '/nested/'},
+                    {'name': 'esc', 'value': 'd', 'path': '/n%20a'},
+                ], 'http://example.org' + path)
+            for domain in ['localhost', 'localhost.local', '.localhost', '.localhost.local', 'EXAMPLE.ORG', 'example.org', '.org', 'org']:
+                cookie_case([{'name': 'domain', 'value': 'yes', 'domain': domain}],
+                            'http://' + ('localhost' if 'localhost' in domain else 'example.org'))
+            for value in ['a=b', 'a=b; Path=/nested; Secure', 'a="hello world"', r'a="x\073y"', 'a=b; a=c', 'a=b; bad; c=d']:
+                cookie_case([{'name': 'saved', 'value': '1'}], 'http://example.org/nested/test', ['Cookie:' + value])
+            cookie_case([
+                {'name': 'a', 'value': '1', 'domain': 'example.org'},
+                {'name': 'b', 'value': '2', 'domain': '.example.org'},
+                {'name': 'c', 'value': '3', 'domain': 'example.org'},
+                {'name': 'a', 'value': '4', 'domain': 'example.org'},
+            ], 'http://example.org')
+            session.unlink()
+            for cookie in ['a=1; Domain=127.0.0.1', 'b=2; Path=/set-cookie', 'a=3; Domain=127.0.0.1',
+                           'b=4; Path=/set-cookie; Max-Age=0', 'c=5; Path=/; Secure']:
+                run(['-I', '--session=' + str(session), url + '/set-cookie/nested', 'X-Set-Cookie:' + cookie])
+                records.append(json.loads(session.read_text())['cookies'])
+            run(['-I', '--session=' + str(session), url + '/echo'])
             env['NETRC'] = str(directory / 'netrc')
             for contents in [
                 'machine example.org login user account acct password pass',

@@ -68,6 +68,8 @@ class Server(http.server.BaseHTTPRequestHandler):
         elif self.path == '/loop':
             status = 302
             headers['Location'] = '/loop'
+        elif self.path.startswith('/set-cookie'):
+            headers['Set-Cookie'] = self.headers.get('X-Set-Cookie', '')
         elif self.path == '/cookies':
             headers['Set-Cookie'] = 'token=secret; Path=/'
         elif self.path == '/json':

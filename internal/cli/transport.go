@@ -218,7 +218,9 @@ func (t *transport) connect(ctx context.Context, u, proxyURL *url.URL) error {
 	if err != nil {
 		return err
 	}
-	closeOnError := func(err error) error { conn.Close(); return err }
+	raw := conn
+	stop := context.AfterFunc(ctx, func() { _ = raw.Close() })
+	closeOnError := func(err error) error { stop(); conn.Close(); return err }
 	if proxyURL != nil && proxyURL.Scheme == "https" {
 		secured, err := t.tls.connect(ctx, conn, proxyURL.Hostname())
 		if err != nil {
@@ -251,7 +253,7 @@ func (t *transport) connect(ctx context.Context, u, proxyURL *url.URL) error {
 		conn = secured
 	}
 	t.conn = conn
-	t.cancel = context.AfterFunc(ctx, func() { _ = conn.Close() })
+	t.cancel = stop
 	t.reader = bufio.NewReader(conn)
 	t.target = target
 	return nil

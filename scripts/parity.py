@@ -348,6 +348,14 @@ def main():
                              ([], ['text=@' + str(fixture)]), ([], ['q==@' + str(fixture)]),
                              ([], ['X-File:@' + str(fixture)])]:
             add('file ' + str(flags) + str(items), ['-I', *flags, url + '/echo', *items])
+        json_fixture = Path(temp, 'data.json')
+        json_fixture.write_text('{"b":2,\n"a":1}\n')
+        for file in [fixture, json_fixture]:
+            for encoding in [[], ['--chunked']]:
+                for output in [['-pB'], ['-v']]:
+                    for pretty in ['none', 'format', 'colors']:
+                        add('upload display ' + file.suffix + str(encoding) + str(output) + pretty,
+                            ['-I', *encoding, *output, '--pretty=' + pretty, url + '/echo', '@' + str(file)])
         source = ast.parse((ROOT / '.reference/cli-master/tests/test_json.py').read_text())
         for node in ast.walk(source):
             if isinstance(node, ast.FunctionDef) and node.name == 'test_nested_json_syntax':

@@ -26,6 +26,7 @@ type request struct {
 	defaultHost  bool
 	streamedBody bool
 	liveInput    bool
+	chunkLines   bool
 }
 
 func (r *request) setHeader(name, value string) {
@@ -399,6 +400,9 @@ func buildRequest(o options, program string, stdin io.Reader, stdinTTY bool) (*r
 		r.ContentLength = -1
 		r.TransferEncoding = []string{"chunked"}
 		r.setHeader("Transfer-Encoding", "chunked")
+		if !o.has("offline") {
+			r.moveHeaderBefore("Transfer-Encoding", "User-Agent")
+		}
 	}
 	for key := range removed {
 		r.Header.Del(key)
@@ -418,6 +422,7 @@ func buildRequest(o options, program string, stdin io.Reader, stdinTTY bool) (*r
 	}
 	r.defaultHost = !seen["host"] && !removed["host"]
 	r.liveInput = liveInput != nil
+	r.chunkLines = o.has("chunked") && (fromStdin || fileCount > 0 && !form)
 	r.streamedBody = !o.has("offline") && !compressed && (r.liveInput || fileCount > 0 || form && o.value("request-type") == "multipart" || o.has("chunked"))
 	return r, cleanup, nil
 }

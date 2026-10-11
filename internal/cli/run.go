@@ -245,7 +245,7 @@ func exchange(ctx context.Context, t *transport, r *request, s *session, auth au
 			previousBody = strings.Contains(selection, "B")
 		}
 		if r.streamedBody && strings.Contains(selection, "B") && r.Body != nil {
-			r.Body = &displayedUpload{ReadCloser: r.Body, output: out, contentType: r.Header.Get("Content-Type"), headers: strings.Contains(selection, "H")}
+			r.Body = &displayedUpload{ReadCloser: r.Body, output: out, contentType: r.Header.Get("Content-Type"), headers: strings.Contains(selection, "H"), lines: r.chunkLines}
 		}
 		start := time.Now()
 		response, headers, err := t.send(ctx, r)

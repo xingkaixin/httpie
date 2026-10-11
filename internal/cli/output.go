@@ -366,11 +366,28 @@ type displayedUpload struct {
 	output      *output
 	contentType string
 	headers     bool
+	lines       bool
+	pending     []byte
 }
 
 func (r *displayedUpload) Read(data []byte) (int, error) {
 	n, err := r.ReadCloser.Read(data)
-	if n > 0 {
+	if r.lines {
+		r.pending = append(r.pending, data[:n]...)
+		for len(r.pending) > 0 {
+			end := bytes.IndexByte(r.pending, '\n') + 1
+			if end == 0 {
+				if err != io.EOF {
+					break
+				}
+				end = len(r.pending)
+			}
+			if writeErr := r.output.writeBody(bytes.NewReader(r.pending[:end]), r.contentType, false, r.headers); writeErr != nil {
+				return n, writeErr
+			}
+			r.pending = r.pending[end:]
+		}
+	} else if n > 0 {
 		if writeErr := r.output.writeBody(bytes.NewReader(data[:n]), r.contentType, false, r.headers); writeErr != nil {
 			return n, writeErr
 		}

@@ -25,3 +25,6 @@ run = "python3 scripts/parity.py && python3 scripts/state-parity.py"
 description = "Measure CLI latency and peak RSS"
 depends = ["build"]
 run = "python3 scripts/benchmark.py"
+
+[settings]
+idiomatic_version_file_ignore_minimum_versions = true

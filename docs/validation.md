@@ -11,6 +11,8 @@ mise run parity
 mise run bench
 ```
 
+Go 构建版本由 `mise.toml` 固定为 1.27.2。项目设置 `idiomatic_version_file_ignore_minimum_versions = true`，避免启用全局 Go 版本文件探测时，把 `go.mod` 的最低兼容版本当成构建版本。这采用 [mise 的新版本探测行为](https://mise.jdx.dev/lang/go.html#version-files)，不会修改用户的全局配置。
+
 原版未锁定完整依赖图。本次固定 `urllib3==2.2.3` 和 `charset-normalizer==3.3.2`：较新的 urllib3 2.8.0 在流式原始 deflate 场景丢失尾部字节；charset-normalizer 3.5.2 将上游 Big5 fixture 识别为 Johab，使原版自身两项测试失败。恢复到 3.3.2 后，上游六项请求/响应字符集自动检测测试全部通过。没有对这些错误输出进行归一化。
 
 ## 差分

@@ -143,6 +143,7 @@ func buildRequest(o options, program string, stdin io.Reader, stdinTTY bool) (*r
 	var custom []header
 	removed := map[string]bool{}
 	var body bodySource
+	fileType := ""
 	hasData := false
 	fileCount := 0
 	form := o.value("request-type") == "form" || o.value("request-type") == "multipart"
@@ -195,9 +196,7 @@ func buildRequest(o options, program string, stdin io.Reader, stdinTTY bool) (*r
 			filename, _, _ := strings.Cut(it.value, ";type=")
 			filename = expandPath(filename)
 			body = bodySource{{path: filename}}
-			if ct := fileMIME(filename); ct != "" {
-				custom = append(custom, header{"Content-Type", ct})
-			}
+			fileType = fileMIME(filename)
 		case "=", ":=":
 			hasData = true
 			var value any = it.value
@@ -285,6 +284,9 @@ func buildRequest(o options, program string, stdin io.Reader, stdinTTY bool) (*r
 	}
 	if jsonMode {
 		contentType = "application/json"
+	}
+	if fileType != "" {
+		contentType = fileType
 	}
 	if form {
 		contentType = "application/x-www-form-urlencoded; charset=utf-8"

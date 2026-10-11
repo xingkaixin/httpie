@@ -47,6 +47,9 @@ def main():
             config.write_text('{"disable_update_warnings":true,"default_options":["--form","--pretty=format"]}')
             run(['-I', '--offline', '--no-form', '--no-pretty', 'example.org', 'a=1'])
             config.write_text('{"disable_update_warnings":true}')
+            config.write_text('{broken')
+            run(['--help'])
+            config.write_text('{"disable_update_warnings":true}')
             destination = directory / 'download'
             destination.write_bytes(b'01234')
             run(['-I', '-dco', str(destination), '-q', url + '/range'])

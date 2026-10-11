@@ -39,9 +39,11 @@ func run(program string, args []string, stdin io.Reader, stdout, stderr io.Write
 	if program == "httpie" {
 		return runManager(args, stdout, stderr)
 	}
-	args, err = configArgs(args)
-	if err != nil {
-		return 1, err
+	configured, configErr := configArgs(args)
+	if configErr != nil {
+		fmt.Fprintf(stderr, "\n%s: warning: %s\n", program, configErr)
+	} else {
+		args = configured
 	}
 	o, err := parseOptions(args)
 	if err != nil {

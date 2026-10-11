@@ -4,6 +4,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"os"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -31,9 +32,6 @@ func availableStyles() []string {
 	return names
 }
 func (o *output) color(text, media string) string {
-	if os.Getenv("TERM") == "dumb" {
-		return text
-	}
 	loadPalettes.Do(func() { _ = json.Unmarshal(paletteData, &palettes) })
 	style := o.options.value("style")
 	if style != "auto" && !strings.Contains(os.Getenv("TERM"), "256color") {
@@ -46,23 +44,43 @@ func (o *output) color(text, media string) string {
 	if palette == nil {
 		return text
 	}
-	text = strings.ReplaceAll(text, "\r\n", "\n")
-	text = strings.ReplaceAll(text, "\r", "\n")
-	if !strings.HasSuffix(text, "\n") {
-		text += "\n"
-	}
-	var tokens []chroma.Token
-	if media == "http" {
-		tokens = httpTokens(text, style != "auto")
-	} else if strings.Contains(media, "json") || (o.options.value("request-type") == "json" && jsonCandidate(text)) {
-		tokens = jsonTokens(text)
-	} else {
+	var lexer chroma.Lexer
+	jsonBody := strings.Contains(media, "json")
+	if media != "http" && !jsonBody {
 		if media == "text/plain" {
+			lexer = lexers.Get("text")
+		} else if media != "application/octet-stream" {
+			lexer = lexers.MatchMimeType(media)
+		}
+		if lexer == nil {
+			_, subtype, _ := strings.Cut(media, "/")
+			for _, name := range strings.Split(subtype, "+") {
+				if candidate := lexers.Get(name); candidate != nil {
+					lexer = candidate
+				}
+			}
+		}
+		if o.options.value("request-type") == "json" && (lexer == nil || media == "text/plain") && jsonCandidate(text) {
+			jsonBody = true
+		}
+		if !jsonBody && lexer == nil {
 			return text
 		}
-		lexer := lexers.MatchMimeType(media)
-		if lexer == nil {
-			return text
+	}
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	text = strings.ReplaceAll(text, "\r", "\n")
+	text = strings.Trim(text, "\n") + "\n"
+	var tokens []chroma.Token
+	switch {
+	case media == "http":
+		tokens = httpTokens(text, style != "auto")
+	case jsonBody:
+		tokens = jsonTokens(text)
+	case media == "text/plain":
+		return text
+	default:
+		if strings.Contains(media, "xml") {
+			lexer = xmlColorLexer
 		}
 		iterator, err := lexer.Tokenise(nil, text)
 		if err != nil {
@@ -112,8 +130,15 @@ func (o *output) color(text, media string) string {
 	return b.String()
 }
 func jsonCandidate(text string) bool { _, err := decodeJSON([]byte(text)); return err == nil }
+
+var jsonPrefix = regexp.MustCompile(`(?is)^([^{\["]+)((?:[{\["]|true|false|null).+)`)
+
 func jsonTokens(text string) []chroma.Token {
 	var tokens []chroma.Token
+	if match := jsonPrefix.FindStringSubmatch(text); match != nil {
+		tokens = append(tokens, chroma.Token{Type: chroma.Error, Value: match[1]})
+		text = match[2]
+	}
 	for i := 0; i < len(text); {
 		start := i
 		kind := chroma.Error
@@ -145,6 +170,9 @@ func jsonTokens(text string) []chroma.Token {
 		case strings.ContainsRune("{}[],:", rune(c)):
 			kind = chroma.Punctuation
 			i++
+			for i < len(text) && strings.ContainsRune("{}[],", rune(text[i])) {
+				i++
+			}
 		case unicode.IsSpace(rune(c)):
 			kind = chroma.TextWhitespace
 			i++
@@ -160,17 +188,27 @@ func jsonTokens(text string) []chroma.Token {
 				}
 				i++
 			}
-		default:
-			for _, word := range []string{"true", "false", "null"} {
-				if strings.HasPrefix(text[i:], word) {
-					kind = chroma.KeywordConstant
-					i += len(word)
-					break
-				}
-			}
-			if i == start {
+		case strings.HasPrefix(text[i:], "//"):
+			kind = chroma.CommentSingle
+			i += 2
+			for i < len(text) && text[i] != '\n' {
 				i++
 			}
+		case strings.HasPrefix(text[i:], "/*"):
+			if end := strings.Index(text[i+2:], "*/"); end >= 0 {
+				kind = chroma.CommentMultiline
+				i += end + 4
+			} else {
+				i = len(text)
+			}
+		case c == 'f' || c == 'n' || c == 't':
+			kind = chroma.KeywordConstant
+			i++
+			for i < len(text) && strings.ContainsRune("truefalsenull", rune(text[i])) {
+				i++
+			}
+		default:
+			i++
 		}
 		tokens = append(tokens, chroma.Token{Type: kind, Value: text[start:i]})
 	}

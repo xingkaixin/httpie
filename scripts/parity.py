@@ -23,6 +23,7 @@ GO = ROOT / 'bin/http'
 
 class Server(http.server.BaseHTTPRequestHandler):
     protocol_version = 'HTTP/1.1'
+    responses = {}
 
     def log_message(self, *args):
         pass
@@ -58,7 +59,9 @@ class Server(http.server.BaseHTTPRequestHandler):
                         if k.lower() not in {'content-length', 'content-encoding'}},
             'body': body.decode('utf-8', errors='replace')
         }, sort_keys=True).encode()
-        if self.path.startswith('/status/'):
+        if self.path in self.responses:
+            payload, content_type, headers = self.responses[self.path]
+        elif self.path.startswith('/status/'):
             status = int(self.path.split('/')[-1])
             payload = b'status'
         elif self.path.startswith('/redirect/'):
@@ -203,6 +206,32 @@ def main():
         add('escaped auth ' + repr(credentials), ['-I', '--offline', '-a', credentials, 'example.org'])
     for target in ['http://u%3Ax:p%40x@example.org', 'http://u:p%2fx@example.org']:
         add('encoded URL auth ' + target, ['-I', '--offline', target])
+    response_cases = [
+        (b'', 'application/json', {}),
+        (b'a\rb\r\n\nc', 'text/plain', {}),
+        (b'a\n\n', 'text/plain', {}),
+        (b'\n\n{"a":1}\n\n', 'application/json', {}),
+        (b'hello', 'foo/bar', {}),
+        (b'hello', 'application/xml', {}),
+        (b'<root a="1">hi &amp; world<child /></root>', 'application/xml', {}),
+        (b'\x00', 'application/octet-stream', {}),
+        (b'', 'application/json', {'Content-Encoding': 'gzip'}),
+        (b'', 'application/json', {'Content-Encoding': 'deflate'}),
+    ]
+    for index, response in enumerate(response_cases):
+        endpoint = '/output-case/' + str(index)
+        Server.responses[endpoint] = response
+        for terminal in [False, True]:
+            for pretty in ['none', 'format', 'colors']:
+                for stream in [[], ['--stream']]:
+                    add('output edge ' + repr((index, terminal, pretty, stream)),
+                        ['-I', '-b', '--pretty=' + pretty, *stream, url + endpoint], terminal=terminal)
+    for flags in [['--pretty=format'], ['--pretty=format', '--stream'], ['--pretty=none']]:
+        add('binary headers ' + repr(flags), ['-I', '-pHBhb', *flags, url + '/binary'], terminal=True)
+    for mime in ['', 'foo/bar', 'application/octet-stream', 'application/xml', 'application/json', 'text/plain']:
+        for payload in ['hello', 'hello\rworld\r\nnext\n', 'line\n\n', '', '{"z":1,"a":2}']:
+            add('raw coloring ' + repr((mime, payload)), ['-I', '--offline', '-pB', '--pretty=colors',
+                '--raw=' + payload, 'example.org', 'Content-Type:' + mime])
     for flags in [
         ['--raw', '--help'], ['--timeout', '--version'], ['--timeout=-1'], ['--timeout=nan'],
         ['--max-redirects=-1'], ['--max-headers=-1'], ['--pretty=bad', '--help'], ['--style=bad', '--help'],

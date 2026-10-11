@@ -117,8 +117,10 @@ func (o *output) writeRequest(r *request, selection string) error {
 			return err
 		}
 		defer body.Close()
-		if err = o.writeBody(body, r.Header.Get("Content-Type"), false); err != nil {
-			return err
+		if r.ContentLength != 0 {
+			if err = o.writeBody(body, r.Header.Get("Content-Type"), false, strings.Contains(selection, "H")); err != nil {
+				return err
+			}
 		}
 		if o.tty {
 			_, err = io.WriteString(o.writer, "\n\n")
@@ -143,7 +145,7 @@ func (o *output) writeResponse(r *http.Response, headers []header, selection str
 		if o.options.has("response-mime") {
 			ct = o.options.value("response-mime")
 		}
-		if err = o.writeBody(body, ct, true); err != nil {
+		if err = o.writeBody(body, ct, true, strings.Contains(selection, "h")); err != nil {
 			return err
 		}
 		if o.tty && !strings.Contains(selection, "m") {
@@ -186,6 +188,11 @@ func responseHeaders(raw []header) []header {
 }
 func decodedBody(r *http.Response) (io.Reader, func(), error) {
 	var reader io.Reader = r.Body
+	buffer := bufio.NewReader(reader)
+	if _, err := buffer.Peek(1); err == io.EOF {
+		return buffer, func() {}, nil
+	}
+	reader = buffer
 	var closers []io.Closer
 	close := func() {
 		for i := len(closers) - 1; i >= 0; i-- {
@@ -231,7 +238,7 @@ func decodedBody(r *http.Response) (io.Reader, func(), error) {
 
 const binaryNotice = "\n+-----------------------------------------+\n| NOTE: binary data not shown in terminal |\n+-----------------------------------------+"
 
-func (o *output) writeBody(reader io.Reader, contentType string, response bool) error {
+func (o *output) writeBody(reader io.Reader, contentType string, response, headers bool) error {
 	if !o.tty && o.pretty == "none" {
 		_, err := io.Copy(o.writer, reader)
 		return err
@@ -242,16 +249,20 @@ func (o *output) writeBody(reader io.Reader, contentType string, response bool) 
 	if response && o.options.has("response-charset") {
 		encoding = o.options.value("response-charset")
 	}
+	notice := binaryNotice
+	if headers {
+		notice = "\n" + notice
+	}
 	process := func(data []byte) error {
 		if bytes.ContainsRune(data, 0) {
-			_, err := io.WriteString(o.writer, binaryNotice)
+			_, err := io.WriteString(o.writer, notice)
 			return err
 		}
 		data = decodeText(data, encoding)
 		if !utf8.Valid(data) {
 			data = bytes.ToValidUTF8(data, []byte("�"))
 		}
-		if o.formatting() {
+		if o.formatting() && validMIME(media) {
 			if o.format["json.format"] == "true" && (strings.Contains(media, "json") || strings.Contains(media, "javascript") || strings.Contains(media, "text") || o.options.value("request-type") == "json") {
 				indent, _ := strconv.Atoi(o.format["json.indent"])
 				starts := []int{0}
@@ -270,7 +281,7 @@ func (o *output) writeBody(reader io.Reader, contentType string, response bool) 
 				data = formatXML(data, indent)
 			}
 		}
-		if o.coloring() {
+		if o.coloring() && validMIME(media) {
 			data = []byte(o.color(string(data), media))
 		}
 		if !o.tty && outputEncoding != "" && !strings.EqualFold(outputEncoding, "utf-8") {
@@ -285,32 +296,39 @@ func (o *output) writeBody(reader io.Reader, contentType string, response bool) 
 		return err
 	}
 	if o.options.has("stream") || media == "text/event-stream" || o.pretty == "none" {
-		b := bufio.NewReader(reader)
-		for {
-			line, err := b.ReadBytes('\n')
-			if len(line) > 0 {
-				if response {
-					line = bytes.TrimRight(line, "\r\n")
-				}
-				if writeErr := process(line); writeErr != nil {
-					return writeErr
-				}
-				if bytes.ContainsRune(line, 0) {
-					return nil
-				}
-				if response {
-					if _, err := io.WriteString(o.writer, "\n"); err != nil {
-						return err
-					}
-				}
+		scanner := bufio.NewScanner(reader)
+		scanner.Buffer(make([]byte, 4096), int(^uint(0)>>1))
+		scanner.Split(func(data []byte, atEOF bool) (int, []byte, error) {
+			separators := "\n"
+			if response {
+				separators = "\r\n"
 			}
-			if err == io.EOF {
-				return nil
+			if index := bytes.IndexAny(data, separators); index >= 0 {
+				if response {
+					return index + 1, data[:index], nil
+				}
+				return index + 1, data[:index+1], nil
 			}
-			if err != nil {
+			if atEOF && len(data) > 0 {
+				return len(data), data, nil
+			}
+			return 0, nil, nil
+		})
+		for scanner.Scan() {
+			line := scanner.Bytes()
+			if err := process(line); err != nil {
 				return err
 			}
+			if bytes.ContainsRune(line, 0) {
+				return nil
+			}
+			if response {
+				if _, err := io.WriteString(o.writer, "\n"); err != nil {
+					return err
+				}
+			}
 		}
+		return scanner.Err()
 	}
 	var data bytes.Buffer
 	buffer := make([]byte, 32*1024)
@@ -318,7 +336,7 @@ func (o *output) writeBody(reader io.Reader, contentType string, response bool) 
 		n, err := reader.Read(buffer)
 		if n > 0 {
 			if bytes.ContainsRune(buffer[:n], 0) {
-				_, e := io.WriteString(o.writer, binaryNotice)
+				_, e := io.WriteString(o.writer, notice)
 				return e
 			}
 			data.Write(buffer[:n])
@@ -331,4 +349,9 @@ func (o *output) writeBody(reader io.Reader, contentType string, response bool) 
 		}
 	}
 	return process(data.Bytes())
+}
+
+func validMIME(media string) bool {
+	kind, subtype, ok := strings.Cut(media, "/")
+	return ok && kind != "" && subtype != "" && !strings.Contains(subtype, "/")
 }

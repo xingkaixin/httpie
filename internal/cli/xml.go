@@ -23,6 +23,7 @@ func formatXML(data []byte, indent int) []byte {
 	decoder := xml.NewDecoder(bytes.NewReader(data))
 	root := &xmlNode{kind: "document"}
 	stack := []*xmlNode{root}
+	elements := 0
 	qualified := func(name xml.Name) string {
 		if name.Space != "" {
 			return name.Space + ":" + name.Local
@@ -42,6 +43,12 @@ func formatXML(data []byte, indent int) []byte {
 		var node *xmlNode
 		switch value := token.(type) {
 		case xml.StartElement:
+			if len(stack) == 1 {
+				elements++
+				if elements > 1 {
+					return data
+				}
+			}
 			node = &xmlNode{kind: "element", text: qualified(value.Name), attributes: value.Attr}
 			stack = append(stack, node)
 		case xml.EndElement:
@@ -51,6 +58,9 @@ func formatXML(data []byte, indent int) []byte {
 			stack = stack[:len(stack)-1]
 			continue
 		case xml.CharData:
+			if len(stack) == 1 && strings.TrimSpace(string(value)) != "" {
+				return data
+			}
 			kind := "text"
 			if bytes.HasPrefix(data[offset:decoder.InputOffset()], []byte("<![CDATA[")) {
 				kind = "cdata"
@@ -67,7 +77,7 @@ func formatXML(data []byte, indent int) []byte {
 			parent.children = append(parent.children, node)
 		}
 	}
-	if len(stack) != 1 {
+	if len(stack) != 1 || elements != 1 {
 		return data
 	}
 	var out strings.Builder

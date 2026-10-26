@@ -8,32 +8,28 @@ import (
 	"strconv"
 	"sync/atomic"
 	"time"
+
+	"github.com/xingkaixin/mygo-native-ui/ui/kvtable"
 )
 
-type kv struct {
-	On    bool   `json:"on"`
-	Key   string `json:"key"`
-	Value string `json:"value"`
-}
-
 type request struct {
-	ID       string  `json:"id"`
-	Name     string  `json:"name"`
-	Method   string  `json:"method"`
-	URL      string  `json:"url"`
-	Params   []kv    `json:"params,omitempty"`
-	Headers  []kv    `json:"headers,omitempty"`
-	BodyType string  `json:"bodyType"`
-	Body     string  `json:"body,omitempty"`
-	Form     []kv    `json:"form,omitempty"`
-	AuthType string  `json:"authType"`
-	User     string  `json:"user,omitempty"`
-	Password string  `json:"password,omitempty"`
-	Token    string  `json:"token,omitempty"`
-	BodyFile string  `json:"bodyFile,omitempty"`
-	Follow   bool    `json:"follow,omitempty"`
-	Insecure bool    `json:"insecure,omitempty"`
-	Timeout  float64 `json:"timeout,omitempty"`
+	ID       string         `json:"id"`
+	Name     string         `json:"name"`
+	Method   string         `json:"method"`
+	URL      string         `json:"url"`
+	Params   []kvtable.Pair `json:"params,omitempty"`
+	Headers  []kvtable.Pair `json:"headers,omitempty"`
+	BodyType string         `json:"bodyType"`
+	Body     string         `json:"body,omitempty"`
+	Form     []kvtable.Pair `json:"form,omitempty"`
+	AuthType string         `json:"authType"`
+	User     string         `json:"user,omitempty"`
+	Password string         `json:"password,omitempty"`
+	Token    string         `json:"token,omitempty"`
+	BodyFile string         `json:"bodyFile,omitempty"`
+	Follow   bool           `json:"follow,omitempty"`
+	Insecure bool           `json:"insecure,omitempty"`
+	Timeout  float64        `json:"timeout,omitempty"`
 }
 
 type collection struct {
@@ -55,6 +51,9 @@ const (
 	bodyText = "Text"
 	bodyForm = "Form"
 	bodyFile = "File"
+
+	kindText = "Text"
+	kindFile = "File"
 
 	authNone   = "None"
 	authBasic  = "Basic"
@@ -82,9 +81,9 @@ func sampleWorkspace() *workspace {
 	post.BodyType = bodyJSON
 	post.Body = "{\n  \"name\": \"MyGo\",\n  \"native\": true,\n  \"stars\": 42\n}"
 	get := newRequest("Query params", "GET", "https://httpbin.org/get")
-	get.Params = []kv{{On: true, Key: "lang", Value: "go"}, {On: true, Key: "page", Value: "1"}}
+	get.Params = []kvtable.Pair{{On: true, Key: "lang", Value: "go"}, {On: true, Key: "page", Value: "1"}}
 	repo := newRequest("GitHub repo", "GET", "https://api.github.com/repos/egoist/mygo")
-	repo.Headers = []kv{{On: true, Key: "Accept", Value: "application/vnd.github+json"}}
+	repo.Headers = []kvtable.Pair{{On: true, Key: "Accept", Value: "application/vnd.github+json"}}
 	col := &collection{ID: newID(), Name: "示例", Open: true, Requests: []*request{get, post, repo}}
 	return &workspace{Collections: []*collection{col}, Selected: get.ID, Split: 460}
 }
@@ -115,8 +114,8 @@ func (ws *workspace) find(id string) (*collection, *request) {
 	return nil, nil
 }
 
-func enabled(rows []kv) []kv {
-	var out []kv
+func enabled(rows []kvtable.Pair) []kvtable.Pair {
+	var out []kvtable.Pair
 	for _, r := range rows {
 		if r.On && r.Key != "" {
 			out = append(out, r)

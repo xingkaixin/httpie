@@ -88,7 +88,11 @@ func requestArgs(r *request) []string {
 	case bodyForm:
 		opts = append(opts, "--form")
 		for _, f := range enabled(r.Form) {
-			items = append(items, keySeparators.Replace(f.Key)+"="+f.Value)
+			sep := "="
+			if f.Kind == kindFile {
+				sep = "@"
+			}
+			items = append(items, keySeparators.Replace(f.Key)+sep+f.Value)
 		}
 	case bodyFile:
 		if r.BodyFile != "" {

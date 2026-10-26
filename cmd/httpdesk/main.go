@@ -9,10 +9,12 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
+	"github.com/xingkaixin/mygo-native-ui/ui/kvtable"
 )
 
 func icon(shapes string) *ui.SVG {
@@ -23,7 +25,6 @@ var (
 	iconPlus       = icon(`<path d="M5 12h14"/><path d="M12 5v14"/>`)
 	iconFolderPlus = icon(`<path d="M12 10v6"/><path d="M9 13h6"/><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>`)
 	iconUpDown     = icon(`<path d="m7 15 5 5 5-5"/><path d="m7 9 5-5 5 5"/>`)
-	iconTrash      = icon(`<path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/>`)
 	iconCopy       = icon(`<rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>`)
 	iconSend       = icon(`<path d="M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z"/><path d="m21.854 2.147-10.94 10.939"/>`)
 )
@@ -62,6 +63,7 @@ type app struct {
 	url       ui.Handle
 
 	reqTab, resTab int
+	bulk           bool
 	bodyHL, resHL  highlighter
 
 	renaming   *collection
@@ -116,7 +118,30 @@ func menuSelect(c *ui.Context, label string, value *string, options []string) {
 	})
 }
 
-func withCount(label string, rows []kv) string {
+var formKinds = []kvtable.Kind{{Name: kindText}, {Name: kindFile, Cell: kvtable.File}}
+
+var headerNames = []string{
+	"Accept", "Accept-Encoding", "Accept-Language", "Authorization", "Cache-Control", "Content-Type",
+	"Cookie", "If-Modified-Since", "If-None-Match", "Origin", "Referer", "User-Agent", "X-Requested-With",
+}
+
+var mediaTypes = []string{"application/json", "application/x-www-form-urlencoded", "multipart/form-data", "text/plain", "text/html", "application/xml", "*/*"}
+
+func headerValues(key string) []string {
+	switch strings.ToLower(key) {
+	case "accept", "content-type":
+		return mediaTypes
+	case "accept-encoding":
+		return []string{"gzip, deflate, br", "identity"}
+	case "cache-control":
+		return []string{"no-cache", "no-store", "max-age=0"}
+	case "authorization":
+		return []string{"Bearer ", "Basic "}
+	}
+	return nil
+}
+
+func withCount(label string, rows []kvtable.Pair) string {
 	if n := len(enabled(rows)); n > 0 {
 		return fmt.Sprintf("%s %d", label, n)
 	}
@@ -272,50 +297,23 @@ func (a *app) requestPane(c *ui.Context, r *request) {
 			ui.Segmented(c, &a.reqTab, withCount("Params", r.Params), withCount("Headers", r.Headers), body, auth, "Settings").Label("请求内容")
 		})
 		switch a.reqTab {
-		case 0:
-			ui.Scroll(c).Grow(1).Padding(0, 16, 16, 16).Children(func() { kvEditor(c, &r.Params, "参数", "值") })
-		case 1:
-			ui.Scroll(c).Grow(1).Padding(0, 16, 16, 16).Children(func() { kvEditor(c, &r.Headers, "Header", "值") })
+		case 0, 1:
+			ui.Scroll(c).Grow(1).Padding(0, 16, 16, 16).Gap(6).Children(func() {
+				ui.Row(c).Justify(ui.End).Children(func() { a.bulkButton(c) })
+				if a.reqTab == 0 {
+					kvtable.EditorWith(c.Key("params-"+r.ID), &r.Params, kvtable.Options{KeyLabel: "参数", ValueLabel: "值", Reorder: true, Bulk: &a.bulk})
+				} else {
+					kvtable.EditorWith(c.Key("headers-"+r.ID), &r.Headers, kvtable.Options{
+						KeyLabel: "Header", ValueLabel: "值", Keys: headerNames, Values: headerValues, Reorder: true, Bulk: &a.bulk,
+					})
+				}
+			})
 		case 2:
 			a.bodyEditor(c, r)
 		case 3:
 			authEditor(c, r)
 		case 4:
 			settingsEditor(c, r)
-		}
-	})
-}
-
-func kvEditor(c *ui.Context, rows *[]kv, keyHint, valueHint string) {
-	t := c.Theme()
-	// A blank row at the end takes the next entry.
-	if n := len(*rows); n == 0 || (*rows)[n-1].Key != "" || (*rows)[n-1].Value != "" {
-		*rows = append(*rows, kv{On: true})
-	}
-	field := func(v *string, hint string, on bool) ui.Element {
-		in := ui.TextInputBase(c, v).Placeholder(hint).Label(hint).Font("monospace").FontSize(12).Grow(1).Basis(0).Padding(7, 6)
-		if !on {
-			in.TextColor(t.TextMuted)
-		}
-		return in
-	}
-	ui.Column(c).Radius(8).Border(1, t.Border).Gap(1).Dividers(1, t.Border).Clip().Children(func() {
-		for i := range *rows {
-			row := &(*rows)[i]
-			blank := i == len(*rows)-1
-			ui.Row(c.Key(i)).Padding(0, 6).Gap(6).AlignItems(ui.Center).Children(func() {
-				on := ui.Checkbox(c, &row.On, "").Label("启用")
-				if blank {
-					on.Invisible()
-				}
-				field(&row.Key, keyHint, row.On)
-				ui.Box(c).Width(1).AlignSelf(ui.Stretch).Background(t.Border)
-				field(&row.Value, valueHint, row.On)
-				del := iconButton(c, iconTrash, "删除").OnClick(func() { *rows = slices.Delete(*rows, i, i+1) })
-				if blank {
-					del.Invisible()
-				}
-			})
 		}
 	})
 }
@@ -343,7 +341,11 @@ func (a *app) bodyEditor(c *ui.Context, r *request) {
 		case bodyNone:
 			ui.Column(c).Grow(1).Center().Children(func() { caption(c, "此请求不带 Body") })
 		case bodyForm:
-			ui.Scroll(c).Grow(1).Children(func() { kvEditor(c, &r.Form, "字段", "值") })
+			ui.Scroll(c).Grow(1).Children(func() {
+				kvtable.EditorWith(c.Key("form-"+r.ID), &r.Form, kvtable.Options{
+					KeyLabel: "字段", ValueLabel: "值", Kinds: formKinds, Choose: a.chooseFile, Reorder: true,
+				})
+			})
 		case bodyFile:
 			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 				name := r.BodyFile
@@ -376,6 +378,19 @@ func authEditor(c *ui.Context, r *request) {
 			ui.Field(c, "Token", func() { ui.TextInput(c, &r.Token).Font("monospace") })
 		}
 	})
+}
+
+func (a *app) bulkButton(c *ui.Context) {
+	t := c.Theme()
+	label := "批量编辑"
+	if a.bulk {
+		label = "表格编辑"
+	}
+	b := ui.ButtonBase(c).Label(label).Padding(2, 6).Radius(4).TextColor(t.TextMuted)
+	if b.Hovered() {
+		b.Background(t.SurfaceHover).TextColor(t.Text)
+	}
+	b.OnClick(func() { a.bulk = !a.bulk }).Children(func() { ui.Text(c, label).FontSize(12) })
 }
 
 func settingsEditor(c *ui.Context, r *request) {

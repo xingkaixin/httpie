@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"slices"
 	"testing"
+
+	"github.com/xingkaixin/mygo-native-ui/ui/kvtable"
 )
 
 func TestSendRequest(t *testing.T) {
@@ -18,7 +20,7 @@ func TestSendRequest(t *testing.T) {
 	defer srv.Close()
 
 	r := newRequest("t", "POST", srv.URL)
-	r.Params = []kv{{On: true, Key: "q", Value: "go"}, {On: false, Key: "skip", Value: "x"}}
+	r.Params = []kvtable.Pair{{On: true, Key: "q", Value: "go"}, {On: false, Key: "skip", Value: "x"}}
 	r.AuthType, r.Token = authBearer, "abc"
 	r.BodyType, r.Body = bodyJSON, `{"n":1}`
 	res := send(context.Background(), requestArgs(r))
@@ -30,7 +32,7 @@ func TestSendRequest(t *testing.T) {
 
 func TestRequestArgs(t *testing.T) {
 	r := newRequest("t", "PUT", "example.org")
-	r.Headers = []kv{{On: true, Key: "X-Empty"}, {On: true, Key: "-a:b", Value: "v"}}
+	r.Headers = []kvtable.Pair{{On: true, Key: "X-Empty"}, {On: true, Key: "-a:b", Value: "v"}}
 	r.BodyType, r.Body = bodyText, "hi"
 	want := []string{"--raw=hi", "--", "PUT", "example.org", "X-Empty;", `-a\:b:v`, "Content-Type:text/plain; charset=utf-8"}
 	if got := requestArgs(r); !slices.Equal(got, want) {

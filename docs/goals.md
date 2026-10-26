@@ -9,7 +9,7 @@
 
 ## 范围
 
-提供 `http`、`https` 和 `httpie` CLI。保留全部内置 CLI 功能，包括配置、会话管理、认证、网络、输出和下载。用户已确认不兼容第三方 Python 插件，因此不提供插件安装、Python 插件执行或任何 SDK。Go 实现置于 `internal/`，不承诺 Go 库接口。
+提供 `http`、`https` 和 `httpie` CLI。保留全部内置 CLI 功能，包括配置、会话管理、认证、网络、输出和下载。用户已确认不兼容第三方 Python 插件，因此不提供插件安装、Python 插件执行或任何 SDK。Go 实现置于 `internal/`，不承诺 Go 库接口。桌面客户端 `cmd/httpdesk` 只经由 `internal/core` 发送请求，不属于基线兼容范围。
 
 所有开发直接在 `main` 上进行，按可审阅的功能批次提交。Go 版本由项目 `mise.toml` 固定，构建、测试均通过 mise 执行。
 

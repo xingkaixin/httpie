@@ -6,7 +6,7 @@
 
 ## 模块
 
-`internal/core` 是请求语义、传输、会话和格式化，接收与命令行相同的参数；`internal/cli` 是命令行进程外壳，只经由 core 的导出接口工作。
+`internal/core` 是请求语义、传输、会话和格式化，接收与命令行相同的参数；`internal/cli` 是命令行进程外壳，只经由 core 的导出接口工作。桌面客户端 `cmd/httpdesk` 把界面中的请求转换为同样的参数交给 core，自己只观察消息、读取响应正文。
 
 | 文件 | 职责 |
 | --- | --- |
@@ -21,8 +21,11 @@
 | `download.go` | 文件名、续传、完整性校验、进度显示 |
 | `manager.go`、`manual.go`、`updates.go` | 帮助、参数导出、管理命令、更新检查 |
 | `stdin.go` | stdin 首次数据观察及延迟警告 |
+| `cmd/httpdesk/main.go`、`model.go` | 桌面界面、集合与请求、工作区持久化 |
+| `cmd/httpdesk/send.go` | 请求转为参数、复制命令、经 core 发送并格式化响应 |
+| `cmd/httpdesk/env.go` | 环境、`{{变量}}` 解析与高亮 |
 
-所有实现均位于 `internal/`。没有公开库接口、插件框架或额外服务进程。
+命令行实现均位于 `internal/`；桌面客户端的打包配置在根目录 `mygo.json`。没有公开库接口、插件框架或额外服务进程。
 
 ## HTTP 与 TLS
 

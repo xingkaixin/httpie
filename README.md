@@ -1,6 +1,6 @@
 # HTTPie CLI · Go
 
-以附带的 HTTPie 3.2.4 源码为基线，用 Go 实现 `http`、`https`、`httpie` 三个命令。保留内置请求、认证、会话、格式化、下载和管理功能。运行时不需要 Python，不提供 SDK，也不执行第三方 Python 插件。
+以附带的 HTTPie 3.2.4 源码为基线，用 Go 实现 `http`、`https`、`httpie` 三个命令。保留内置请求、认证、会话、格式化、下载和管理功能。运行时不需要 Python，不提供 SDK，也不执行第三方 Python 插件。另附桌面客户端 HTTP Desk，与命令行共用同一请求核心。
 
 ## 构建
 
@@ -51,6 +51,17 @@ http --offline example.org name=HTTPie count:=42
 ```
 
 更新代码后重新执行 `mise run install`，即可覆盖更新已安装的命令。安装后的二进制不依赖项目目录，运行时仍需系统中的 OpenSSL 动态库。
+
+## 桌面客户端
+
+`cmd/httpdesk` 是基于 [mygo](https://github.com/egoist/mygo) 的 HTTP Desk，把界面中的请求转换为 `http` 参数，经 `internal/core` 发送。构建依赖与 CLI 相同；因为使用 Cgo，只能在目标平台本机构建。
+
+```sh
+mise run dev
+mise exec -- go tool mygo build
+```
+
+`dev` 以热重载运行；`build` 生成应用包，输出到 `build/`。集合、请求与环境保存在应用数据目录的 `workspace.json`。请求中可以用 `{{变量}}` 引用当前环境的值，“复制命令”给出等价的 `http` 命令。
 
 ## 验证
 

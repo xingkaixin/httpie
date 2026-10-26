@@ -1,4 +1,4 @@
-package cli
+package core
 
 import (
 	"fmt"
@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-const version = "3.2.4"
+const Version = "3.2.4"
 
 type optionSpec struct {
 	name, short, dest, kind, defaultValue, description string
@@ -74,16 +74,16 @@ var optionSpecs = []optionSpec{
 
 var negativeArgument = regexp.MustCompile(`^-([0-9]+|[0-9]*\.[0-9]+)$`)
 
-func optionLike(value string) bool {
+func OptionLike(value string) bool {
 	return len(value) > 1 && value[0] == '-' && !negativeArgument.MatchString(value)
 }
 
-type options struct {
+type Options struct {
 	values map[string][]string
-	args   []string
+	Args   []string
 }
 
-func (o options) value(name string) string {
+func (o Options) Value(name string) string {
 	values := o.values[name]
 	if len(values) > 0 {
 		return values[len(values)-1]
@@ -95,18 +95,18 @@ func (o options) value(name string) string {
 	}
 	return ""
 }
-func (o options) has(name string) bool    { return len(o.values[name]) > 0 }
-func (o options) count(name string) int   { return len(o.values[name]) }
-func (o options) integer(name string) int { n, _ := strconv.Atoi(o.value(name)); return n }
+func (o Options) Has(name string) bool    { return len(o.values[name]) > 0 }
+func (o Options) Count(name string) int   { return len(o.values[name]) }
+func (o Options) Integer(name string) int { n, _ := strconv.Atoi(o.Value(name)); return n }
 
-func parseOptions(args []string) (options, error) {
-	o := options{values: make(map[string][]string)}
+func ParseOptions(args []string) (Options, error) {
+	o := Options{values: make(map[string][]string)}
 	var resets []string
 	stop := false
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		if stop || arg == "-" || !strings.HasPrefix(arg, "-") {
-			o.args = append(o.args, arg)
+			o.Args = append(o.Args, arg)
 			continue
 		}
 		if arg == "--" {
@@ -161,7 +161,7 @@ func parseOptions(args []string) (options, error) {
 		switch spec.kind {
 		case "value", "append", "int", "float":
 			if !supplied {
-				if i+1 < len(args) && !optionLike(args[i+1]) {
+				if i+1 < len(args) && !OptionLike(args[i+1]) {
 					i++
 					value = args[i]
 
@@ -191,7 +191,7 @@ func parseOptions(args []string) (options, error) {
 			}
 			value = spec.name
 		}
-		if spec.name == "session" && o.has("session-read-only") || spec.name == "session-read-only" && o.has("session") {
+		if spec.name == "session" && o.Has("session-read-only") || spec.name == "session-read-only" && o.Has("session") {
 			return o, fmt.Errorf("--session and --session-read-only are mutually exclusive")
 		}
 		dest := spec.dest
@@ -227,30 +227,37 @@ func parseOptions(args []string) (options, error) {
 	for _, dest := range resets {
 		delete(o.values, dest)
 	}
-	return o, o.validate()
+	if err := o.validate(); err != nil {
+		return o, err
+	}
+	if o.Has("offline") {
+		delete(o.values, "download")
+		delete(o.values, "continue")
+	}
+	return o, nil
 }
 
-func (o options) validate() error {
+func (o Options) validate() error {
 	for _, name := range []string{"print", "history-print"} {
-		for _, c := range o.value(name) {
+		for _, c := range o.Value(name) {
 			if !strings.ContainsRune("HBhbm", c) {
 				return fmt.Errorf("invalid output option: %c", c)
 			}
 		}
 	}
-	if v := o.value("pretty"); v != "" && v != "all" && v != "colors" && v != "format" && v != "none" {
+	if v := o.Value("pretty"); v != "" && v != "all" && v != "colors" && v != "format" && v != "none" {
 		return fmt.Errorf("invalid --pretty value: %s", v)
 	}
-	if v := o.value("auth-type"); v != "" && v != "?" && v != "basic" && v != "digest" && v != "bearer" {
+	if v := o.Value("auth-type"); v != "" && v != "?" && v != "basic" && v != "digest" && v != "bearer" {
 		return fmt.Errorf("invalid --auth-type: %s", v)
 	}
-	if o.has("session") && o.has("session-read-only") {
+	if o.Has("session") && o.Has("session-read-only") {
 		return fmt.Errorf("--session and --session-read-only are mutually exclusive")
 	}
-	if o.has("continue") && (!o.has("download") || !o.has("output")) {
+	if o.Has("continue") && (!o.Has("download") || !o.Has("output")) {
 		return fmt.Errorf("--continue requires --download and --output")
 	}
-	if o.has("compress") && (o.has("chunked") || o.value("request-type") == "multipart") {
+	if o.Has("compress") && (o.Has("chunked") || o.Value("request-type") == "multipart") {
 		return fmt.Errorf("cannot combine --compress and --chunked/--multipart")
 	}
 	return nil
@@ -293,4 +300,26 @@ func validateOption(name, value string) error {
 		return fmt.Errorf("invalid --%s: %s", name, value)
 	}
 	return nil
+}
+
+func NewerVersion(candidate, current string) bool {
+	parse := func(value string) []int {
+		var version []int
+		parts := strings.Split(value, ".")
+		for _, part := range parts[:min(3, len(parts))] {
+			n, err := strconv.Atoi(strings.TrimSpace(part))
+			if err != nil {
+				break
+			}
+			version = append(version, n)
+		}
+		return version
+	}
+	a, b := parse(candidate), parse(current)
+	for i := 0; i < min(len(a), len(b)); i++ {
+		if a[i] != b[i] {
+			return a[i] > b[i]
+		}
+	}
+	return len(a) > len(b)
 }

@@ -191,7 +191,7 @@ def main():
     for suffix in ['/a%2Fb', '/a//b', '/a/./b/../c/', '/a/%2E%2E/b', '/a%20b?q=a b', '/café?q=中文']:
         for flag in [[], ['--path-as-is']]:
             add('URL ' + suffix + str(flag), ['-I', '--offline', *flag, 'example.org' + suffix])
-    palettes = json.loads((ROOT / 'internal/cli/palettes.json').read_text())
+    palettes = json.loads((ROOT / 'internal/core/palettes.json').read_text())
     for style in palettes:
         if not style.endswith('-headers'):
             add('color ' + style, ['-I', '--offline', '--pretty=all', '--style=' + style,

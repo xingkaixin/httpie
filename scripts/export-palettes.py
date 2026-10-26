@@ -24,4 +24,4 @@ result['solarized'] = {key.removeprefix('Token.').replace('.', ''): list(value)
 for token, colors in TERMINAL_COLORS.items():
     formatted = ansiformat(colors[0], 'VALUE') if colors[0] else 'VALUE'
     result['auto'][str(token).removeprefix('Token.').replace('.', '')] = formatted.split('VALUE')
-Path('internal/cli/palettes.json').write_text(json.dumps(result, sort_keys=True, separators=(',', ':')) + '\n')
+Path('internal/core/palettes.json').write_text(json.dumps(result, sort_keys=True, separators=(',', ':')) + '\n')

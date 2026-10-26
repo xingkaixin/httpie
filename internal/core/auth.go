@@ -1,4 +1,4 @@
-package cli
+package core
 
 import (
 	"crypto/md5"
@@ -64,9 +64,9 @@ func splitCredentials(raw string) (string, string, bool) {
 	return username.String(), password.String(), true
 }
 
-func authCredentials(o options, r *request) (authentication, error) {
-	a := authentication{kind: o.value("auth-type"), raw: o.value("auth")}
-	provided := o.has("auth")
+func authCredentials(o Options, r *Request) (authentication, error) {
+	a := authentication{kind: o.Value("auth-type"), raw: o.Value("auth")}
+	provided := o.Has("auth")
 	parsed := false
 	defer func() { r.URL.User = nil }()
 	if !provided && a.kind == "" && r.URL.User != nil {
@@ -78,13 +78,13 @@ func authCredentials(o options, r *request) (authentication, error) {
 	if a.kind == "" {
 		a.kind = "basic"
 	}
-	if !provided && o.has("auth-type") && !o.has("ignore-netrc") && a.kind != "bearer" {
+	if !provided && o.Has("auth-type") && !o.Has("ignore-netrc") && a.kind != "bearer" {
 		a.username, a.password, provided = netrcAuth(r.URL.Hostname())
 		a.raw = a.username + ":" + a.password
 		parsed = provided
 	}
 	if !provided {
-		if o.has("auth-type") {
+		if o.Has("auth-type") {
 			return authentication{}, fmt.Errorf("--auth required")
 		}
 		return authentication{}, nil
@@ -96,7 +96,7 @@ func authCredentials(o options, r *request) (authentication, error) {
 		var hasPassword bool
 		a.username, a.password, hasPassword = splitCredentials(a.raw)
 		if !hasPassword {
-			if o.has("ignore-stdin") {
+			if o.Has("ignore-stdin") {
 				return a, fmt.Errorf("unable to prompt for passwords because --ignore-stdin is set")
 			}
 			var err error
@@ -111,7 +111,7 @@ func authCredentials(o options, r *request) (authentication, error) {
 	}
 	return a, nil
 }
-func applyAuth(r *request, a authentication) error {
+func applyAuth(r *Request, a authentication) error {
 	switch a.kind {
 	case "basic":
 		credentials := []byte(a.username + ":" + a.password)
@@ -124,9 +124,9 @@ func applyAuth(r *request, a authentication) error {
 				credentials = append(credentials, byte(c))
 			}
 		}
-		r.setHeader("Authorization", "Basic "+base64.StdEncoding.EncodeToString(credentials))
+		r.SetHeader("Authorization", "Basic "+base64.StdEncoding.EncodeToString(credentials))
 	case "bearer":
-		r.setHeader("Authorization", "Bearer "+a.raw)
+		r.SetHeader("Authorization", "Bearer "+a.raw)
 	default:
 		return nil
 	}

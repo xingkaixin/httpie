@@ -1,4 +1,4 @@
-package cli
+package core
 
 import (
 	"bufio"
@@ -51,7 +51,7 @@ func (d *idleDialer) DialContext(ctx context.Context, network, address string) (
 }
 
 type transport struct {
-	options options
+	options Options
 	tls     *tlsSettings
 	conn    net.Conn
 	reader  *bufio.Reader
@@ -70,7 +70,7 @@ func (t *transport) Close() {
 	}
 	t.target = ""
 }
-func newTransport(o options) (*transport, error) {
+func newTransport(o Options) (*transport, error) {
 	config, err := newTLSSettings(o)
 	if err != nil {
 		return nil, err
@@ -169,9 +169,9 @@ func (t *transport) connect(ctx context.Context, u, proxyURL *url.URL) error {
 		return nil
 	}
 	t.Close()
-	seconds, _ := strconv.ParseFloat(t.options.value("timeout"), 64)
+	seconds, _ := strconv.ParseFloat(t.options.Value("timeout"), 64)
 	if seconds < 0 || math.IsNaN(seconds) || math.IsInf(seconds, 0) {
-		return fmt.Errorf("invalid timeout: %s", t.options.value("timeout"))
+		return fmt.Errorf("invalid timeout: %s", t.options.Value("timeout"))
 	}
 	timeout := time.Duration(seconds * float64(time.Second))
 	dialer := &idleDialer{Dialer: net.Dialer{Timeout: timeout}}
@@ -258,7 +258,7 @@ func (t *transport) connect(ctx context.Context, u, proxyURL *url.URL) error {
 	t.target = target
 	return nil
 }
-func (t *transport) send(ctx context.Context, r *request) (*http.Response, []header, error) {
+func (t *transport) send(ctx context.Context, r *Request) (*http.Response, []Header, error) {
 	p, err := t.proxyFor(r.URL)
 	if err != nil {
 		return nil, nil, err
@@ -353,7 +353,7 @@ func (t *transport) send(ctx context.Context, r *request) (*http.Response, []hea
 	}
 	for {
 		var raw bytes.Buffer
-		var headers []header
+		var headers []Header
 		for lineNumber := 0; ; lineNumber++ {
 			line, e := t.reader.ReadString('\n')
 			if e != nil {
@@ -362,7 +362,7 @@ func (t *transport) send(ctx context.Context, r *request) (*http.Response, []hea
 			if len(line) > 65536 {
 				return nil, nil, fmt.Errorf("response header line exceeds 65536 bytes")
 			}
-			if max := t.options.integer("max-headers"); max != 0 && lineNumber > max {
+			if max := t.options.Integer("max-headers"); max != 0 && lineNumber > max {
 				return nil, nil, fmt.Errorf("got more than %d headers", max)
 			}
 			raw.WriteString(line)
@@ -380,7 +380,7 @@ func (t *transport) send(ctx context.Context, r *request) (*http.Response, []hea
 			if !ok {
 				return nil, nil, fmt.Errorf("malformed response header")
 			}
-			headers = append(headers, header{name, strings.TrimSpace(value)})
+			headers = append(headers, Header{name, strings.TrimSpace(value)})
 		}
 		reader := bufio.NewReader(io.MultiReader(bytes.NewReader(raw.Bytes()), t.reader))
 		response, e := http.ReadResponse(reader, r.Request)

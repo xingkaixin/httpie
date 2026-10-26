@@ -1,4 +1,4 @@
-package cli
+package core
 
 import (
 	"context"
@@ -9,29 +9,29 @@ import (
 	"time"
 )
 
-// observer sees the messages of an exchange as they pass.
-type observer interface {
-	// request is called before each request is sent; retry marks the
-	// request repeated with Digest credentials.
-	request(r *request, retry bool) error
-	// sent is called once a request is sent and its response's head read.
-	sent(r *request) error
-	// response is called with each response shown: the last, and the
+// Observer sees the messages of an exchange as they pass.
+type Observer interface {
+	// Request is called before each Request is sent; retry marks the
+	// Request repeated with Digest credentials.
+	Request(r *Request, retry bool) error
+	// Sent is called once a request is Sent and its response's head read.
+	Sent(r *Request) error
+	// Response is called with each Response shown: the last, and the
 	// redirects that --all or --verbose ask for.
-	response(r *http.Response, headers []header, start time.Time) error
+	Response(r *http.Response, headers []Header, start time.Time) error
 }
 
-type redirectLimitError int
+type RedirectLimitError int
 
-func (e redirectLimitError) Error() string {
+func (e RedirectLimitError) Error() string {
 	return fmt.Sprintf("too many redirects (--max-redirects=%d)", int(e))
 }
 
-// exchange is a request built from arguments, with its session and
+// Exchange is a request built from arguments, with its session and
 // authentication, and the transport that sends it.
-type exchange struct {
-	options   options
-	request   *request
+type Exchange struct {
+	options   Options
+	Request   *Request
 	session   *session
 	auth      authentication
 	transport *transport
@@ -40,24 +40,24 @@ type exchange struct {
 	closed    bool
 }
 
-func prepare(o options, program string, stdin io.Reader, stdinTTY bool) (*exchange, error) {
+func Prepare(o Options, program string, stdin io.Reader, stdinTTY bool) (*Exchange, error) {
 	req, cleanup, err := buildRequest(o, program, stdin, stdinTTY)
 	if err != nil {
 		return nil, err
 	}
-	e := &exchange{options: o, request: req, body: req.Body, cleanup: cleanup, session: &session{cookies: []storedCookie{}}}
+	e := &Exchange{options: o, Request: req, body: req.Body, cleanup: cleanup, session: &session{cookies: []storedCookie{}}}
 	if err = e.authenticate(); err != nil {
-		e.close()
+		e.Close()
 		return nil, err
 	}
 	return e, nil
 }
 
-func (e *exchange) authenticate() (err error) {
-	o, req := e.options, e.request
-	if name := o.value("session"); name != "" || o.has("session-read-only") {
+func (e *Exchange) authenticate() (err error) {
+	o, req := e.options, e.Request
+	if name := o.Value("session"); name != "" || o.Has("session-read-only") {
 		if name == "" {
-			name = o.value("session-read-only")
+			name = o.Value("session-read-only")
 		}
 		if e.session, err = loadSession(req.Host, name); err != nil {
 			return err
@@ -78,7 +78,7 @@ func (e *exchange) authenticate() (err error) {
 			return err
 		}
 	}
-	if e.auth.kind == "" && !o.has("ignore-netrc") {
+	if e.auth.kind == "" && !o.Has("ignore-netrc") {
 		if user, password, ok := netrcAuth(req.URL.Hostname()); ok {
 			e.auth = authentication{kind: "basic", username: user, password: password, latin1: true}
 		}
@@ -90,22 +90,22 @@ func (e *exchange) authenticate() (err error) {
 		return fmt.Errorf("unsupported session authentication type: %s", kind)
 	}
 	if cookie := s.cookiesFor(req.URL); cookie != "" && req.Header.Get("Cookie") == "" {
-		req.setHeader("Cookie", cookie)
+		req.SetHeader("Cookie", cookie)
 		req.moveHeaderBefore("Cookie", "User-Agent")
 	}
 	return nil
 }
 
-// open sets up the transport, apart from prepare so that the CLI's update
+// Open sets up the transport, apart from prepare so that the CLI's update
 // warnings keep their place between the two.
-func (e *exchange) open() (err error) {
+func (e *Exchange) Open() (err error) {
 	e.transport, err = newTransport(e.options)
 	return err
 }
 
-// close disconnects first, so that closing an unread response body after
+// Close disconnects first, so that closing an unread response body after
 // it does not drain the rest from the network.
-func (e *exchange) close() {
+func (e *Exchange) Close() {
 	if e.closed {
 		return
 	}
@@ -120,23 +120,23 @@ func (e *exchange) close() {
 	e.cleanup()
 }
 
-func (e *exchange) saveSession() error {
-	if e.session.path == "" || e.options.has("session-read-only") && e.session.exists {
+func (e *Exchange) SaveSession() error {
+	if e.session.path == "" || e.options.Has("session-read-only") && e.session.exists {
 		return nil
 	}
 	return e.session.save()
 }
 
-// do sends the request, follows redirects and answers a Digest challenge
+// Do sends the request, follows redirects and answers a Digest challenge
 // as the options ask, and returns the last response with its body unread.
-func (e *exchange) do(ctx context.Context, obs observer) (*http.Response, error) {
-	o, t, r, s, auth := e.options, e.transport, e.request, e.session, e.auth
-	follow := o.has("follow") || o.has("download")
-	history := o.has("all") || o.has("verbose")
+func (e *Exchange) Do(ctx context.Context, obs Observer) (*http.Response, error) {
+	o, t, r, s, auth := e.options, e.transport, e.Request, e.session, e.auth
+	follow := o.Has("follow") || o.Has("download")
+	history := o.Has("all") || o.Has("verbose")
 	redirects := 0
 	digestTried := false
 	for {
-		if err := obs.request(r, digestTried); err != nil {
+		if err := obs.Request(r, digestTried); err != nil {
 			return nil, err
 		}
 		start := time.Now()
@@ -144,7 +144,7 @@ func (e *exchange) do(ctx context.Context, obs observer) (*http.Response, error)
 		if err != nil {
 			return nil, err
 		}
-		if err = obs.sent(r); err != nil {
+		if err = obs.Sent(r); err != nil {
 			t.Close()
 			response.Body.Close()
 			return nil, err
@@ -155,15 +155,15 @@ func (e *exchange) do(ctx context.Context, obs observer) (*http.Response, error)
 		digest := auth.kind == "digest" && !digestTried && response.StatusCode == 401 && offered
 		if redirect {
 			redirects++
-			if max := o.integer("max-redirects"); max != 0 && redirects == max {
+			if max := o.Integer("max-redirects"); max != 0 && redirects == max {
 				t.Close()
 				response.Body.Close()
-				return nil, redirectLimitError(max)
+				return nil, RedirectLimitError(max)
 			}
 		}
 		redirect = follow && redirect
 		if !digest && (history || !redirect) {
-			if err = obs.response(response, headers, start); err != nil {
+			if err = obs.Response(response, headers, start); err != nil {
 				t.Close()
 				response.Body.Close()
 				return nil, err
@@ -185,7 +185,7 @@ func (e *exchange) do(ctx context.Context, obs observer) (*http.Response, error)
 			if e != nil {
 				return nil, e
 			}
-			r.setHeader("Authorization", value)
+			r.SetHeader("Authorization", value)
 			digestTried = true
 		} else {
 			digestTried = false
@@ -227,14 +227,14 @@ func (e *exchange) do(ctx context.Context, obs observer) (*http.Response, error)
 			}
 			r.URL = next
 			if r.defaultHost {
-				r.setHeader("Host", next.Host)
+				r.SetHeader("Host", next.Host)
 			}
 		}
 		if !digest {
 			r.deleteHeader("Cookie")
 		}
 		if cookie := s.cookiesFor(r.URL); cookie != "" && r.Header.Get("Cookie") == "" {
-			r.setHeader("Cookie", cookie)
+			r.SetHeader("Cookie", cookie)
 			r.moveHeaderBefore("Cookie", "User-Agent")
 		}
 		if r.ContentLength != 0 || len(r.TransferEncoding) > 0 {

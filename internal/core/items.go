@@ -1,4 +1,4 @@
-package cli
+package core
 
 import (
 	"fmt"
@@ -60,7 +60,7 @@ func groupItems(items []item) []item {
 	}
 	return result
 }
-func expandPath(path string) string {
+func ExpandPath(path string) string {
 	if !strings.HasPrefix(path, "~") {
 		return path
 	}
@@ -76,7 +76,7 @@ func expandPath(path string) string {
 	return filepath.Join(home, rest)
 }
 func embeddedText(path string) (string, error) {
-	data, err := os.ReadFile(expandPath(path))
+	data, err := os.ReadFile(ExpandPath(path))
 	if err != nil {
 		return "", err
 	}

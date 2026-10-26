@@ -1,4 +1,4 @@
-package cli
+package core
 
 import "github.com/alecthomas/chroma/v2"
 

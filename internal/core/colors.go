@@ -1,4 +1,4 @@
-package cli
+package core
 
 import (
 	_ "embed"
@@ -31,9 +31,9 @@ func availableStyles() []string {
 	sort.Strings(names)
 	return names
 }
-func (o *output) color(text, media string) string {
+func (o *Output) color(text, media string) string {
 	loadPalettes.Do(func() { _ = json.Unmarshal(paletteData, &palettes) })
-	style := o.options.value("style")
+	style := o.options.Value("style")
 	if style != "auto" && !strings.Contains(os.Getenv("TERM"), "256color") {
 		style = "auto"
 	}
@@ -60,7 +60,7 @@ func (o *output) color(text, media string) string {
 				}
 			}
 		}
-		if o.options.value("request-type") == "json" && (lexer == nil || media == "text/plain") && jsonCandidate(text) {
+		if o.options.Value("request-type") == "json" && (lexer == nil || media == "text/plain") && jsonCandidate(text) {
 			jsonBody = true
 		}
 		if !jsonBody && lexer == nil {

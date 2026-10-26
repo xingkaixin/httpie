@@ -15,17 +15,20 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/youmark/pkcs8"
+
+	"httpie/internal/core"
 )
 
 func isolatedCLI(t *testing.T) func(...string) (int, string, string) {
 	t.Helper()
 	t.Setenv("HTTPIE_CONFIG_DIR", t.TempDir())
-	if err := os.WriteFile(filepath.Join(configDir(), "config.json"), []byte(`{"disable_update_warnings":true}`), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(core.ConfigDir(), "config.json"), []byte(`{"disable_update_warnings":true}`), 0600); err != nil {
 		t.Fatal(err)
 	}
 	for _, key := range []string{"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"} {
@@ -197,6 +200,9 @@ func TestDownloadResumeAndRangeRejection(t *testing.T) {
 		}
 	}
 }
+
+var digestField = regexp.MustCompile(`([\w-]+)\s*=\s*(?:"((?:[^"\\]|\\.)*)"|([^,\s]+))`)
+
 func TestDigestAuthentication(t *testing.T) {
 	cli := isolatedCLI(t)
 	hash := func(s string) string { v := md5.Sum([]byte(s)); return hex.EncodeToString(v[:]) }

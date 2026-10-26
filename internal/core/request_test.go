@@ -1,4 +1,4 @@
-package cli
+package core
 
 import (
 	"encoding/json"
@@ -52,7 +52,7 @@ func TestRequestContract(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(strings.Join(c.args, " "), func(t *testing.T) {
-			o, err := parseOptions(c.args)
+			o, err := ParseOptions(c.args)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -79,7 +79,7 @@ func TestRequestContract(t *testing.T) {
 }
 func TestRequestSourceConflicts(t *testing.T) {
 	for _, args := range [][]string{{"example.org", "x=1"}, {"--raw=x", "example.org"}} {
-		o, err := parseOptions(args)
+		o, err := ParseOptions(args)
 		if err != nil {
 			t.Fatal(err)
 		}

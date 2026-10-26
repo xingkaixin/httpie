@@ -1,6 +1,6 @@
 //go:build cgo
 
-package cli
+package core
 
 /*
 #cgo pkg-config: openssl
@@ -124,25 +124,25 @@ import (
 
 type tlsSettings struct {
 	context *C.SSL_CTX
-	options options
+	options Options
 }
 
-func newTLSSettings(o options) (*tlsSettings, error) {
-	verify := strings.ToLower(o.value("verify"))
+func newTLSSettings(o Options) (*tlsSettings, error) {
+	verify := strings.ToLower(o.Value("verify"))
 	check := verify != "no" && verify != "false"
 	for _, name := range []string{"cert", "cert-key"} {
-		if o.has(name) {
-			if _, err := os.Stat(expandPath(o.value(name))); err != nil {
+		if o.Has(name) {
+			if _, err := os.Stat(ExpandPath(o.Value(name))); err != nil {
 				return nil, err
 			}
 		}
 	}
 	protocols := map[string]int{"": 0, "ssl2.3": 0, "tls1": 0x301, "tls1.1": 0x302, "tls1.2": 0x303, "tls1.3": 0x304}
-	protocol, ok := protocols[o.value("ssl")]
+	protocol, ok := protocols[o.Value("ssl")]
 	if !ok {
-		return nil, fmt.Errorf("unsupported SSL version: %s", o.value("ssl"))
+		return nil, fmt.Errorf("unsupported SSL version: %s", o.Value("ssl"))
 	}
-	ciphers := C.CString(o.value("ciphers"))
+	ciphers := C.CString(o.Value("ciphers"))
 	defer C.free(unsafe.Pointer(ciphers))
 	var message [256]C.char
 	verifyFlag := 0
@@ -159,7 +159,7 @@ func (settings *tlsSettings) configure() error {
 	o := settings.options
 	ctx := settings.context
 	var message [256]C.char
-	verify := strings.ToLower(o.value("verify"))
+	verify := strings.ToLower(o.Value("verify"))
 	check := verify != "no" && verify != "false"
 	caFile, caDir := "", ""
 	if check {
@@ -169,9 +169,9 @@ func (settings *tlsSettings) configure() error {
 				caFile = os.Getenv("CURL_CA_BUNDLE")
 			}
 		} else {
-			caFile = o.value("verify")
+			caFile = o.Value("verify")
 		}
-		caFile = expandPath(caFile)
+		caFile = ExpandPath(caFile)
 		if stat, err := os.Stat(caFile); err == nil && stat.IsDir() {
 			caDir = caFile
 			caFile = ""
@@ -188,14 +188,14 @@ func (settings *tlsSettings) configure() error {
 		}
 	}
 
-	if o.has("cert") {
-		keyPath := o.value("cert-key")
+	if o.Has("cert") {
+		keyPath := o.Value("cert-key")
 		if keyPath == "" {
-			keyPath = o.value("cert")
+			keyPath = o.Value("cert")
 		}
-		password := o.value("cert-key-pass")
-		if !o.has("cert-key-pass") {
-			data, err := os.ReadFile(expandPath(keyPath))
+		password := o.Value("cert-key-pass")
+		if !o.Has("cert-key-pass") {
+			data, err := os.ReadFile(ExpandPath(keyPath))
 			if err != nil {
 				return err
 			}
@@ -206,9 +206,9 @@ func (settings *tlsSettings) configure() error {
 				}
 			}
 		}
-		cert := C.CString(expandPath(o.value("cert")))
+		cert := C.CString(ExpandPath(o.Value("cert")))
 		defer C.free(unsafe.Pointer(cert))
-		key := C.CString(expandPath(keyPath))
+		key := C.CString(ExpandPath(keyPath))
 		defer C.free(unsafe.Pointer(key))
 		pass := C.CString(password)
 		defer C.free(unsafe.Pointer(pass))

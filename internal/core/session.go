@@ -1,4 +1,4 @@
-package cli
+package core
 
 import (
 	"encoding/json"
@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-func configDir() string {
+func ConfigDir() string {
 	if dir := os.Getenv("HTTPIE_CONFIG_DIR"); dir != "" {
 		return dir
 	}
@@ -33,8 +33,8 @@ func configDir() string {
 	}
 	return filepath.Join(root, "httpie")
 }
-func configArgs(args []string) ([]string, error) {
-	data, err := os.ReadFile(filepath.Join(configDir(), "config.json"))
+func ConfigArgs(args []string) ([]string, error) {
+	data, err := os.ReadFile(filepath.Join(ConfigDir(), "config.json"))
 	if os.IsNotExist(err) {
 		return args, nil
 	}
@@ -73,7 +73,7 @@ func configArgs(args []string) ([]string, error) {
 	}
 	return append(configuredArgs, args...), nil
 }
-func saveJSON(filename string, data any) error {
+func SaveJSON(filename string, data any) error {
 	body, err := json.MarshalIndent(data, "", "    ")
 	if err != nil {
 		return err
@@ -123,7 +123,7 @@ func (c *storedCookie) UnmarshalJSON(data []byte) error {
 type session struct {
 	path     string
 	original map[string]json.RawMessage
-	headers  []header
+	headers  []Header
 	cookies  []storedCookie
 	auth     map[string]any
 	exists   bool
@@ -133,19 +133,19 @@ var sessionName = regexp.MustCompile(`^[a-zA-Z0-9_.-]+$`)
 
 func sessionPath(host, name string) (string, error) {
 	if strings.ContainsAny(name, "/\\") {
-		return expandPath(name), nil
+		return ExpandPath(name), nil
 	}
 	if !sessionName.MatchString(name) {
 		return "", fmt.Errorf("session name contains invalid characters")
 	}
-	return filepath.Join(configDir(), "sessions", strings.ReplaceAll(host, ":", "_"), name+".json"), nil
+	return filepath.Join(ConfigDir(), "sessions", strings.ReplaceAll(host, ":", "_"), name+".json"), nil
 }
 func loadSession(host, name string) (*session, error) {
 	path, err := sessionPath(host, name)
 	if err != nil {
 		return nil, err
 	}
-	s := &session{path: path, original: map[string]json.RawMessage{}, headers: []header{}, cookies: []storedCookie{}, auth: map[string]any{"type": nil, "username": nil, "password": nil}}
+	s := &session{path: path, original: map[string]json.RawMessage{}, headers: []Header{}, cookies: []storedCookie{}, auth: map[string]any{"type": nil, "username": nil, "password": nil}}
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
 		return s, nil
@@ -166,7 +166,7 @@ func loadSession(host, name string) (*session, error) {
 			parsed, _ := decodeJSON(raw)
 			for _, field := range parsed.(object) {
 				k := field.key
-				s.headers = append(s.headers, header{k, old[k]})
+				s.headers = append(s.headers, Header{k, old[k]})
 			}
 		} else if err = json.Unmarshal(raw, &s.headers); err != nil {
 			return nil, err
@@ -202,9 +202,9 @@ func loadSession(host, name string) (*session, error) {
 	}
 	return s, nil
 }
-func (s *session) apply(r *request, o options) {
+func (s *session) apply(r *Request, o Options) {
 	explicit := map[string]bool{}
-	for _, arg := range o.args {
+	for _, arg := range o.Args {
 		it, err := parseItem(arg)
 		if err == nil && (it.sep == ":" || it.sep == ";" || it.sep == ":@") {
 			explicit[strings.ToLower(it.key)] = true
@@ -224,7 +224,7 @@ func (s *session) apply(r *request, o options) {
 			r.headers = append(r.headers, h)
 			r.Header.Add(h.Name, h.Value)
 		} else {
-			r.setHeader(h.Name, h.Value)
+			r.SetHeader(h.Name, h.Value)
 			seen[key] = true
 		}
 		if len(r.headers) > count {
@@ -244,10 +244,10 @@ func (s *session) credentials() authentication {
 	}
 	return a
 }
-func (s *session) updateHeaders(r *request, o options) error {
-	headers := []header{}
+func (s *session) updateHeaders(r *Request, o Options) error {
+	headers := []Header{}
 	custom := map[string]bool{}
-	for _, arg := range o.args {
+	for _, arg := range o.Args {
 		it, err := parseItem(arg)
 		if err == nil && (it.sep == ":" || it.sep == ";" || it.sep == ":@") {
 			custom[strings.ToLower(it.key)] = true
@@ -390,10 +390,50 @@ func (s *session) save() error {
 		_ = json.Unmarshal(raw, &meta)
 	}
 	if _, ok := meta["httpie"]; !ok {
-		meta["httpie"] = version
+		meta["httpie"] = Version
 	}
 	meta["about"] = "HTTPie session file"
 	meta["help"] = "https://httpie.io/docs#sessions"
 	data["__meta__"] = meta
-	return saveJSON(s.path, data)
+	return SaveJSON(s.path, data)
+}
+
+// UpgradeSession rewrites a session file in the format of this version, as
+// "httpie cli sessions upgrade" does; bind gives cookies without a domain
+// the host's. It reports false for a session already up to date.
+func UpgradeSession(host, name string, bind bool) (path string, upgraded bool, err error) {
+	s, err := loadSession(host, name)
+	if err != nil {
+		return "", false, err
+	}
+	if !s.exists {
+		return "", false, fmt.Errorf("session does not exist: %s", s.path)
+	}
+	meta := map[string]any{}
+	_ = json.Unmarshal(s.original["__meta__"], &meta)
+	current, ok := meta["httpie"].(string)
+	if !ok {
+		current = Version
+	}
+	if !NewerVersion("3.2.0", current) {
+		return s.path, false, nil
+	}
+	if NewerVersion("3.1.0", current) {
+		for i := range s.cookies {
+			c := &s.cookies[i]
+			if c.Domain == nil || *c.Domain == "" {
+				if bind {
+					domain := strings.Split(host, ":")[0]
+					c.Domain = &domain
+				} else {
+					c.Domain = nil
+				}
+			}
+		}
+		s.original["cookies"] = json.RawMessage("[]")
+	}
+	s.original["headers"] = json.RawMessage("[]")
+	meta["httpie"] = Version
+	s.original["__meta__"], _ = json.Marshal(meta)
+	return s.path, true, s.save()
 }

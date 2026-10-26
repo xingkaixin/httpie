@@ -10,6 +10,8 @@ import (
 	"runtime"
 	"runtime/debug"
 	"strings"
+
+	"httpie/internal/core"
 )
 
 //go:embed help.txt
@@ -25,7 +27,7 @@ func runManager(args []string, stdout, stderr io.Writer) (code int, err error) {
 	traceback := false
 	for _, arg := range args {
 		if arg == "--debug" {
-			fmt.Fprintf(stderr, "HTTPie %s\nGo %s\nPlatform %s/%s\nConfig directory: %s\n", version, runtime.Version(), runtime.GOOS, runtime.GOARCH, configDir())
+			fmt.Fprintf(stderr, "HTTPie %s\nGo %s\nPlatform %s/%s\nConfig directory: %s\n", core.Version, runtime.Version(), runtime.GOOS, runtime.GOARCH, core.ConfigDir())
 		}
 		traceback = traceback || arg == "--debug" || arg == "--traceback"
 	}
@@ -88,13 +90,13 @@ func runManager(args []string, stdout, stderr io.Writer) (code int, err error) {
 				fmt.Fprint(stdout, pages[command])
 				return 0, nil
 			case "--version":
-				fmt.Fprintln(stdout, version)
+				fmt.Fprintln(stdout, core.Version)
 				return 0, nil
 			case "--bind-cookies":
 				bind = true
 			case "--format":
 				if !supplied {
-					if i+1 == len(args) || optionLike(args[i+1]) {
+					if i+1 == len(args) || core.OptionLike(args[i+1]) {
 						return 1, fmt.Errorf("--format requires a value")
 					}
 					i++
@@ -145,45 +147,16 @@ func runManager(args []string, stdout, stderr io.Writer) (code int, err error) {
 			return 1, fmt.Errorf("specify sessions upgrade or upgrade-all")
 		}
 		upgrade := func(host, name string) error {
-			s, err := loadSession(host, name)
+			path, upgraded, err := core.UpgradeSession(host, name, bind)
 			if err != nil {
 				return err
 			}
-			if !s.exists {
-				return fmt.Errorf("session does not exist: %s", s.path)
-			}
-			meta := map[string]any{}
-			_ = json.Unmarshal(s.original["__meta__"], &meta)
-			current, ok := meta["httpie"].(string)
-			if !ok {
-				current = version
-			}
-			label := strings.TrimSuffix(filepath.Base(s.path), ".json")
-			if !newerVersion("3.2.0", current) {
+			label := strings.TrimSuffix(filepath.Base(path), ".json")
+			if !upgraded {
 				fmt.Fprintf(stdout, "'%s' @ '%s' is already up to date.\n", label, host)
 				return nil
 			}
-			if newerVersion("3.1.0", current) {
-				for i := range s.cookies {
-					c := &s.cookies[i]
-					if c.Domain == nil || *c.Domain == "" {
-						if bind {
-							domain := strings.Split(host, ":")[0]
-							c.Domain = &domain
-						} else {
-							c.Domain = nil
-						}
-					}
-				}
-				s.original["cookies"] = json.RawMessage("[]")
-			}
-			s.original["headers"] = json.RawMessage("[]")
-			meta["httpie"] = version
-			s.original["__meta__"], _ = json.Marshal(meta)
-			if err = s.save(); err != nil {
-				return err
-			}
-			fmt.Fprintf(stdout, "Upgraded '%s' @ '%s' to v%s\n", label, host, version)
+			fmt.Fprintf(stdout, "Upgraded '%s' @ '%s' to v%s\n", label, host, core.Version)
 			return nil
 		}
 		switch words[2] {
@@ -196,7 +169,7 @@ func runManager(args []string, stdout, stderr io.Writer) (code int, err error) {
 			}
 			return 0, nil
 		case "upgrade-all":
-			directory := filepath.Join(configDir(), "sessions")
+			directory := filepath.Join(core.ConfigDir(), "sessions")
 			if _, err := os.Stat(directory); err != nil {
 				return 1, err
 			}

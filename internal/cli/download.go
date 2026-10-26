@@ -12,24 +12,26 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"httpie/internal/core"
 )
 
-func prepareDownload(r *request, o options) (int64, error) {
-	r.setHeader("Accept-Encoding", "identity")
-	if filename := o.value("output"); filename != "" && filename != "-" {
-		file, err := os.OpenFile(expandPath(filename), os.O_CREATE|os.O_RDWR, 0666)
+func prepareDownload(r *core.Request, o core.Options) (int64, error) {
+	r.SetHeader("Accept-Encoding", "identity")
+	if filename := o.Value("output"); filename != "" && filename != "-" {
+		file, err := os.OpenFile(core.ExpandPath(filename), os.O_CREATE|os.O_RDWR, 0666)
 		if err != nil {
 			return 0, err
 		}
 		file.Close()
 	}
-	if !o.has("continue") {
+	if !o.Has("continue") {
 		return 0, nil
 	}
-	if o.value("output") == "-" {
+	if o.Value("output") == "-" {
 		return 0, fmt.Errorf("cannot resume a download to standard output")
 	}
-	stat, err := os.Stat(expandPath(o.value("output")))
+	stat, err := os.Stat(core.ExpandPath(o.Value("output")))
 	if os.IsNotExist(err) {
 		return 0, nil
 	}
@@ -37,16 +39,16 @@ func prepareDownload(r *request, o options) (int64, error) {
 		return 0, err
 	}
 	if stat.Size() > 0 {
-		r.setHeader("Range", fmt.Sprintf("bytes=%d-", stat.Size()))
+		r.SetHeader("Range", fmt.Sprintf("bytes=%d-", stat.Size()))
 	}
 	return stat.Size(), nil
 }
 
 var contentRange = regexp.MustCompile(`^bytes (\d+)-(\d+)/(\d+|\*)$`)
 
-func download(r *http.Response, initialURL *url.URL, o options, stdout, stderr io.Writer, stdoutTTY, stderrTTY bool, resume int64) (err error) {
+func download(r *http.Response, initialURL *url.URL, o core.Options, stdout, stderr io.Writer, stdoutTTY, stderrTTY bool, resume int64) (err error) {
 	totalSize := r.ContentLength
-	if r.StatusCode == 206 && o.has("continue") {
+	if r.StatusCode == 206 && o.Has("continue") {
 		match := contentRange.FindStringSubmatch(r.Header.Get("Content-Range"))
 		if match == nil {
 			return fmt.Errorf("invalid or missing Content-Range")
@@ -61,7 +63,7 @@ func download(r *http.Response, initialURL *url.URL, o options, stdout, stderr i
 	} else {
 		resume = 0
 	}
-	filename := o.value("output")
+	filename := o.Value("output")
 	outputStdout := filename == "-"
 	if outputStdout {
 		filename = ""
@@ -73,7 +75,7 @@ func download(r *http.Response, initialURL *url.URL, o options, stdout, stderr i
 		if resume > 0 {
 			flags = os.O_CREATE | os.O_WRONLY | os.O_APPEND
 		}
-		file, err = os.OpenFile(expandPath(filename), flags, 0666)
+		file, err = os.OpenFile(core.ExpandPath(filename), flags, 0666)
 	} else if stdoutTTY && !outputStdout {
 		filename = dispositionFilename(r.Header.Get("Content-Disposition"))
 		if filename == "" || filename == "/" {
@@ -125,12 +127,12 @@ func download(r *http.Response, initialURL *url.URL, o options, stdout, stderr i
 		defer file.Close()
 		writer = file
 	}
-	body, close, err := decodedBody(r)
+	body, close, err := core.DecodedBody(r)
 	if err != nil {
 		return err
 	}
 	defer close()
-	if !o.has("quiet") {
+	if !o.Has("quiet") {
 		name := filename
 		if name == "" {
 			name = "<stdout>"

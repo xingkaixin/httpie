@@ -1,4 +1,4 @@
-package cli
+package core
 
 import (
 	"compress/zlib"
@@ -16,13 +16,13 @@ import (
 	"golang.org/x/net/idna"
 )
 
-type header struct {
+type Header struct {
 	Name  string `json:"name"`
 	Value string `json:"value"`
 }
-type request struct {
+type Request struct {
 	*http.Request
-	headers      []header
+	headers      []Header
 	removed      map[string]bool
 	defaultHost  bool
 	streamedBody bool
@@ -30,7 +30,7 @@ type request struct {
 	chunkLines   bool
 }
 
-func (r *request) setHeader(name, value string) {
+func (r *Request) SetHeader(name, value string) {
 	for i := 0; i < len(r.headers); {
 		if strings.EqualFold(r.headers[i].Name, name) {
 			r.headers = append(r.headers[:i], r.headers[i+1:]...)
@@ -38,7 +38,7 @@ func (r *request) setHeader(name, value string) {
 			i++
 		}
 	}
-	r.headers = append(r.headers, header{name, value})
+	r.headers = append(r.headers, Header{name, value})
 	r.Header.Set(name, value)
 	if strings.EqualFold(name, "Host") {
 		r.Host = value
@@ -48,14 +48,14 @@ func (r *request) setHeader(name, value string) {
 var methodPattern = regexp.MustCompile(`^[a-zA-Z]+$`)
 var schemePattern = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9+.-]*://`)
 
-func buildRequest(o options, program string, stdin io.Reader, stdinTTY bool) (*request, func(), error) {
+func buildRequest(o Options, program string, stdin io.Reader, stdinTTY bool) (*Request, func(), error) {
 	var temps []string
 	cleanup := func() {
 		for _, p := range temps {
 			_ = os.Remove(p)
 		}
 	}
-	fail := func(err error) (*request, func(), error) { cleanup(); return nil, func() {}, err }
+	fail := func(err error) (*Request, func(), error) { cleanup(); return nil, func() {}, err }
 	spool := func(input io.Reader) (string, error) {
 		f, err := os.CreateTemp("", "httpie-body-*")
 		if err != nil {
@@ -68,19 +68,19 @@ func buildRequest(o options, program string, stdin io.Reader, stdinTTY bool) (*r
 		}
 		return f.Name(), err
 	}
-	if len(o.args) == 0 {
+	if len(o.Args) == 0 {
 		return fail(fmt.Errorf("URL is required"))
 	}
-	method, rawURL := "", o.args[0]
-	rawItems := o.args[1:]
-	if len(o.args) > 1 && methodPattern.MatchString(o.args[0]) {
-		method = strings.ToUpper(o.args[0])
-		rawURL = o.args[1]
-		rawItems = o.args[2:]
+	method, rawURL := "", o.Args[0]
+	rawItems := o.Args[1:]
+	if len(o.Args) > 1 && methodPattern.MatchString(o.Args[0]) {
+		method = strings.ToUpper(o.Args[0])
+		rawURL = o.Args[1]
+		rawItems = o.Args[2:]
 	}
 	rawURL = strings.TrimPrefix(rawURL, "://")
 	if !schemePattern.MatchString(rawURL) {
-		scheme := o.value("default-scheme")
+		scheme := o.Value("default-scheme")
 		if program == "https" {
 			scheme = "https"
 		}
@@ -132,7 +132,7 @@ func buildRequest(o options, program string, stdin io.Reader, stdinTTY bool) (*r
 	if u.Path == "" {
 		u.Path = "/"
 	}
-	if !o.has("path-as-is") {
+	if !o.Has("path-as-is") {
 		escaped := u.EscapedPath()
 		trailing := strings.HasSuffix(escaped, "/") || strings.HasSuffix(escaped, "/.") || strings.HasSuffix(escaped, "/..")
 		escaped = removeDotSegments(escaped)
@@ -145,13 +145,13 @@ func buildRequest(o options, program string, stdin io.Reader, stdinTTY bool) (*r
 	}
 	var data any
 	var fields, query []item
-	var custom []header
+	var custom []Header
 	removed := map[string]bool{}
 	var body bodySource
 	fileType := ""
 	hasData := false
 	fileCount := 0
-	form := o.value("request-type") == "form" || o.value("request-type") == "multipart"
+	form := o.Value("request-type") == "form" || o.Value("request-type") == "multipart"
 	for _, raw := range rawItems {
 		it, err := parseItem(raw)
 		if err != nil {
@@ -178,14 +178,14 @@ func buildRequest(o options, program string, stdin io.Reader, stdinTTY bool) (*r
 			key := strings.ToLower(it.key)
 			if it.value == "" && it.sep == ":" {
 				removed[key] = true
-				custom = slices.DeleteFunc(custom, func(h header) bool { return strings.EqualFold(h.Name, it.key) })
+				custom = slices.DeleteFunc(custom, func(h Header) bool { return strings.EqualFold(h.Name, it.key) })
 				continue
 			}
 			if strings.ContainsAny(it.key+it.value, "\r\n") {
 				return fail(fmt.Errorf("invalid newline in header"))
 			}
 			delete(removed, key)
-			custom = append(custom, header{it.key, strings.TrimSpace(it.value)})
+			custom = append(custom, Header{it.key, strings.TrimSpace(it.value)})
 		case "==":
 			query = append(query, it)
 		case "@":
@@ -199,7 +199,7 @@ func buildRequest(o options, program string, stdin io.Reader, stdinTTY bool) (*r
 				return fail(fmt.Errorf("invalid file fields (perhaps you meant --form?)"))
 			}
 			filename, _, _ := strings.Cut(it.value, ";type=")
-			filename = expandPath(filename)
+			filename = ExpandPath(filename)
 			body = bodySource{{path: filename}}
 			fileType = fileMIME(filename)
 		case "=", ":=":
@@ -255,8 +255,8 @@ func buildRequest(o options, program string, stdin io.Reader, stdinTTY bool) (*r
 		u.RawQuery += url.QueryEscape(it.key) + "=" + url.QueryEscape(it.value)
 	}
 	fields = groupItems(fields)
-	fromStdin := !stdinTTY && !o.has("ignore-stdin")
-	if (fromStdin && o.has("raw")) || ((fromStdin || o.has("raw") || fileCount > 0 && !form) && data != nil) || ((fromStdin || o.has("raw")) && (fileCount > 0 || len(fields) > 0)) {
+	fromStdin := !stdinTTY && !o.Has("ignore-stdin")
+	if (fromStdin && o.Has("raw")) || ((fromStdin || o.Has("raw") || fileCount > 0 && !form) && data != nil) || ((fromStdin || o.Has("raw")) && (fileCount > 0 || len(fields) > 0)) {
 		return fail(fmt.Errorf("request body (from stdin, --raw or a file) and request data (key=value) cannot be mixed; pass --ignore-stdin"))
 	}
 	var liveInput io.Reader
@@ -264,7 +264,7 @@ func buildRequest(o options, program string, stdin io.Reader, stdinTTY bool) (*r
 	for _, h := range custom {
 		explicitLength = explicitLength || strings.EqualFold(h.Name, "Content-Length") && h.Value != ""
 	}
-	if fromStdin && !o.has("offline") && !o.has("compress") && (o.has("chunked") || explicitLength) {
+	if fromStdin && !o.Has("offline") && !o.Has("compress") && (o.Has("chunked") || explicitLength) {
 		liveInput = stdin
 	} else if fromStdin {
 		path, err := spool(stdin)
@@ -273,17 +273,17 @@ func buildRequest(o options, program string, stdin io.Reader, stdinTTY bool) (*r
 		}
 		body = bodySource{{path: path}}
 	}
-	if o.has("raw") {
-		body = bodySource{{data: []byte(o.value("raw"))}}
+	if o.Has("raw") {
+		body = bodySource{{data: []byte(o.Value("raw"))}}
 	}
 	if method == "" {
 		method = "GET"
-		if hasData || fromStdin || o.has("raw") {
+		if hasData || fromStdin || o.Has("raw") {
 			method = "POST"
 		}
 	}
 	contentType := ""
-	jsonMode := o.value("request-type") == "json" || (!form && (data != nil || fromStdin || fileCount > 0 || o.value("raw") != ""))
+	jsonMode := o.Value("request-type") == "json" || (!form && (data != nil || fromStdin || fileCount > 0 || o.Value("raw") != ""))
 	if data != nil {
 		body = bodySource{{data: jsonText(data, -1, true)}}
 	}
@@ -295,8 +295,8 @@ func buildRequest(o options, program string, stdin io.Reader, stdinTTY bool) (*r
 	}
 	if form {
 		contentType = "application/x-www-form-urlencoded; charset=utf-8"
-		if fileCount > 0 || o.value("request-type") == "multipart" {
-			body, contentType, err = multipartBody(fields, o.value("boundary"))
+		if fileCount > 0 || o.Value("request-type") == "multipart" {
+			body, contentType, err = multipartBody(fields, o.Value("boundary"))
 			if err != nil {
 				return fail(err)
 			}
@@ -346,7 +346,7 @@ func buildRequest(o options, program string, stdin io.Reader, stdinTTY bool) (*r
 		return fail(err)
 	}
 	compressed := false
-	if o.has("compress") && size > 0 {
+	if o.Has("compress") && size > 0 {
 		input, err := body.open()
 		if err != nil {
 			return fail(err)
@@ -368,7 +368,7 @@ func buildRequest(o options, program string, stdin io.Reader, stdinTTY bool) (*r
 				return fail(e)
 			}
 		}
-		if stat.Size() < size || o.count("compress") > 1 {
+		if stat.Size() < size || o.Count("compress") > 1 {
 			body = bodySource{{path: f.Name()}}
 			size = stat.Size()
 			compressed = true
@@ -396,25 +396,25 @@ func buildRequest(o options, program string, stdin io.Reader, stdinTTY bool) (*r
 	}
 	req.URL = u
 	req.ContentLength = size
-	r := &request{Request: req, removed: removed}
-	r.setHeader("Accept-Encoding", "gzip, deflate, br")
-	r.setHeader("Accept", "*/*")
-	r.setHeader("Connection", "keep-alive")
+	r := &Request{Request: req, removed: removed}
+	r.SetHeader("Accept-Encoding", "gzip, deflate, br")
+	r.SetHeader("Accept", "*/*")
+	r.SetHeader("Connection", "keep-alive")
 	if size > 0 || method == "POST" || method == "PUT" || method == "PATCH" {
-		r.setHeader("Content-Length", strconv.FormatInt(size, 10))
+		r.SetHeader("Content-Length", strconv.FormatInt(size, 10))
 	}
-	r.setHeader("User-Agent", "HTTPie/"+version)
+	r.SetHeader("User-Agent", "HTTPie/"+Version)
 	if jsonMode {
-		r.setHeader("Accept", "application/json, */*;q=0.5")
+		r.SetHeader("Accept", "application/json, */*;q=0.5")
 	}
 	if contentType != "" {
-		r.setHeader("Content-Type", contentType)
+		r.SetHeader("Content-Type", contentType)
 	}
 	seen := map[string]bool{}
 	for _, h := range custom {
 		key := strings.ToLower(h.Name)
 		if !seen[key] {
-			r.setHeader(h.Name, h.Value)
+			r.SetHeader(h.Name, h.Value)
 			seen[key] = true
 		} else {
 			r.headers = append(r.headers, h)
@@ -422,17 +422,17 @@ func buildRequest(o options, program string, stdin io.Reader, stdinTTY bool) (*r
 		}
 	}
 	if compressed {
-		r.setHeader("Content-Encoding", "deflate")
-		r.setHeader("Content-Length", strconv.FormatInt(size, 10))
+		r.SetHeader("Content-Encoding", "deflate")
+		r.SetHeader("Content-Length", strconv.FormatInt(size, 10))
 	}
-	if o.has("chunked") {
-		if !o.has("offline") {
+	if o.Has("chunked") {
+		if !o.Has("offline") {
 			r.removed["content-length"] = true
 		}
 		r.ContentLength = -1
 		r.TransferEncoding = []string{"chunked"}
-		r.setHeader("Transfer-Encoding", "chunked")
-		if !o.has("offline") {
+		r.SetHeader("Transfer-Encoding", "chunked")
+		if !o.Has("offline") {
 			r.moveHeaderBefore("Transfer-Encoding", "User-Agent")
 		}
 	}
@@ -443,7 +443,7 @@ func buildRequest(o options, program string, stdin io.Reader, stdinTTY bool) (*r
 		}
 	}
 	if !seen["host"] {
-		r.setHeader("Host", u.Host)
+		r.SetHeader("Host", u.Host)
 	}
 	for i := 0; i < len(r.headers); {
 		if removed[strings.ToLower(r.headers[i].Name)] {
@@ -454,8 +454,8 @@ func buildRequest(o options, program string, stdin io.Reader, stdinTTY bool) (*r
 	}
 	r.defaultHost = !seen["host"] && !removed["host"]
 	r.liveInput = liveInput != nil
-	r.chunkLines = o.has("chunked") && (fromStdin || fileCount > 0 && !form)
-	r.streamedBody = !o.has("offline") && !compressed && (r.liveInput || fileCount > 0 || form && o.value("request-type") == "multipart" || o.has("chunked"))
+	r.chunkLines = o.Has("chunked") && (fromStdin || fileCount > 0 && !form)
+	r.streamedBody = !o.Has("offline") && !compressed && (r.liveInput || fileCount > 0 || form && o.Value("request-type") == "multipart" || o.Has("chunked"))
 	return r, cleanup, nil
 }
 
@@ -503,7 +503,7 @@ func quoteURI(value string) string {
 	return out.String()
 }
 
-func (r *request) moveHeaderBefore(name, before string) {
+func (r *Request) moveHeaderBefore(name, before string) {
 	if strings.EqualFold(name, before) {
 		return
 	}
@@ -526,7 +526,7 @@ func (r *request) moveHeaderBefore(name, before string) {
 		}
 	}
 }
-func (r *request) deleteHeader(name string) {
+func (r *Request) deleteHeader(name string) {
 	r.Header.Del(name)
 	for i := 0; i < len(r.headers); {
 		if strings.EqualFold(r.headers[i].Name, name) {

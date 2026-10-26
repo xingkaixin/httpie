@@ -1,4 +1,4 @@
-package cli
+package core
 
 import (
 	"bufio"
@@ -20,17 +20,17 @@ import (
 	"golang.org/x/text/transform"
 )
 
-type output struct {
+type Output struct {
 	writer       io.Writer
 	tty          bool
-	options      options
+	options      Options
 	pretty       string
 	format       map[string]string
 	previousBody bool
 }
 
-func newOutput(w io.Writer, tty bool, o options) (*output, error) {
-	p := o.value("pretty")
+func NewOutput(w io.Writer, tty bool, o Options) (*Output, error) {
+	p := o.Value("pretty")
 	if p == "" {
 		p = "none"
 		if tty {
@@ -58,19 +58,19 @@ func newOutput(w io.Writer, tty bool, o options) (*output, error) {
 			f[k] = v
 		}
 	}
-	return &output{writer: w, tty: tty, options: o, pretty: p, format: f}, nil
+	return &Output{writer: w, tty: tty, options: o, pretty: p, format: f}, nil
 }
-func (o *output) selection() string {
-	if o.options.has("print") {
-		return o.options.value("print")
+func (o *Output) Selection() string {
+	if o.options.Has("print") {
+		return o.options.Value("print")
 	}
-	if o.options.count("verbose") > 1 {
+	if o.options.Count("verbose") > 1 {
 		return "HBhbm"
 	}
-	if o.options.has("verbose") {
+	if o.options.Has("verbose") {
 		return "HBhb"
 	}
-	if o.options.has("offline") {
+	if o.options.Has("offline") {
 		return "HB"
 	}
 	if o.tty {
@@ -78,20 +78,20 @@ func (o *output) selection() string {
 	}
 	return "b"
 }
-func (o *output) separate(selected bool) error {
+func (o *Output) separate(selected bool) error {
 	if o.previousBody && selected && !o.tty {
 		_, err := io.WriteString(o.writer, "\n\n")
 		return err
 	}
 	return nil
 }
-func (o *output) request(r *request, retry bool) error {
-	selection := o.selection()
+func (o *Output) Request(r *Request, retry bool) error {
+	selection := o.Selection()
 	if !retry {
 		if err := o.separate(strings.ContainsAny(selection, "HB")); err != nil {
 			return err
 		}
-		if err := o.writeRequest(r, selection); err != nil {
+		if err := o.WriteRequest(r, selection); err != nil {
 			return err
 		}
 		o.previousBody = strings.Contains(selection, "B")
@@ -101,31 +101,31 @@ func (o *output) request(r *request, retry bool) error {
 	}
 	return nil
 }
-func (o *output) sent(r *request) error {
-	if r.streamedBody && strings.Contains(o.selection(), "B") && o.tty {
+func (o *Output) Sent(r *Request) error {
+	if r.streamedBody && strings.Contains(o.Selection(), "B") && o.tty {
 		_, err := io.WriteString(o.writer, "\n\n")
 		return err
 	}
 	return nil
 }
-func (o *output) response(r *http.Response, headers []header, start time.Time) error {
-	selection := o.selection()
-	if o.options.has("download") {
+func (o *Output) Response(r *http.Response, headers []Header, start time.Time) error {
+	selection := o.Selection()
+	if o.options.Has("download") {
 		selection = strings.ReplaceAll(selection, "b", "")
 	}
 	if err := o.separate(strings.ContainsAny(selection, "hbm")); err != nil {
 		return err
 	}
-	if err := o.writeResponse(r, headers, selection, start); err != nil {
+	if err := o.WriteResponse(r, headers, selection, start); err != nil {
 		return err
 	}
 	o.previousBody = strings.Contains(selection, "b")
 	return nil
 }
-func (o *output) formatting() bool { return o.pretty == "all" || o.pretty == "format" }
-func (o *output) coloring() bool   { return o.pretty == "all" || o.pretty == "colors" }
-func (o *output) writeHeaders(status string, headers []header) error {
-	fields := append([]header(nil), headers...)
+func (o *Output) formatting() bool { return o.pretty == "all" || o.pretty == "format" }
+func (o *Output) coloring() bool   { return o.pretty == "all" || o.pretty == "colors" }
+func (o *Output) writeHeaders(status string, headers []Header) error {
+	fields := append([]Header(nil), headers...)
 	if o.formatting() && o.format["headers.sort"] == "true" {
 		sort.SliceStable(fields, func(i, j int) bool { return fields[i].Name < fields[j].Name })
 	}
@@ -140,10 +140,10 @@ func (o *output) writeHeaders(status string, headers []header) error {
 	_, err := io.WriteString(o.writer, text+"\r\n\r\n")
 	return err
 }
-func (o *output) writeRequest(r *request, selection string) error {
+func (o *Output) WriteRequest(r *Request, selection string) error {
 	if strings.Contains(selection, "H") {
 		uri := r.URL.RequestURI()
-		if o.options.has("path-as-is") {
+		if o.options.Has("path-as-is") {
 			uri = r.URL.EscapedPath()
 			if r.URL.RawPath != "" {
 				uri = r.URL.RawPath
@@ -174,21 +174,21 @@ func (o *output) writeRequest(r *request, selection string) error {
 	}
 	return nil
 }
-func (o *output) writeResponse(r *http.Response, headers []header, selection string, start time.Time) error {
+func (o *Output) WriteResponse(r *http.Response, headers []Header, selection string, start time.Time) error {
 	if strings.Contains(selection, "h") {
 		if err := o.writeHeaders(r.Proto+" "+r.Status, responseHeaders(headers)); err != nil {
 			return err
 		}
 	}
 	if strings.Contains(selection, "b") {
-		body, close, err := decodedBody(r)
+		body, close, err := DecodedBody(r)
 		if err != nil {
 			return err
 		}
 		defer close()
 		ct := r.Header.Get("Content-Type")
-		if o.options.has("response-mime") {
-			ct = o.options.value("response-mime")
+		if o.options.Has("response-mime") {
+			ct = o.options.Value("response-mime")
 		}
 		if err = o.writeBody(body, ct, true, strings.Contains(selection, "h")); err != nil {
 			return err
@@ -210,8 +210,8 @@ func (o *output) writeResponse(r *http.Response, headers []header, selection str
 	}
 	return nil
 }
-func responseHeaders(raw []header) []header {
-	var result, cookies []header
+func responseHeaders(raw []Header) []Header {
+	var result, cookies []Header
 	for _, h := range raw {
 		if strings.EqualFold(h.Name, "Set-Cookie") {
 			cookies = append(cookies, h)
@@ -231,7 +231,7 @@ func responseHeaders(raw []header) []header {
 	}
 	return append(result, cookies...)
 }
-func decodedBody(r *http.Response) (io.Reader, func(), error) {
+func DecodedBody(r *http.Response) (io.Reader, func(), error) {
 	var reader io.Reader = r.Body
 	buffer := bufio.NewReader(reader)
 	if _, err := buffer.Peek(1); err == io.EOF {
@@ -284,7 +284,7 @@ func decodedBody(r *http.Response) (io.Reader, func(), error) {
 
 const binaryNotice = "\n+-----------------------------------------+\n| NOTE: binary data not shown in terminal |\n+-----------------------------------------+"
 
-func (o *output) writeBody(reader io.Reader, contentType string, response, headers bool) error {
+func (o *Output) writeBody(reader io.Reader, contentType string, response, headers bool) error {
 	if !o.tty && o.pretty == "none" {
 		_, err := io.Copy(o.writer, reader)
 		return err
@@ -292,8 +292,8 @@ func (o *output) writeBody(reader io.Reader, contentType string, response, heade
 	media, params, _ := mime.ParseMediaType(contentType)
 	encoding := params["charset"]
 	outputEncoding := encoding
-	if response && o.options.has("response-charset") {
-		encoding = o.options.value("response-charset")
+	if response && o.options.Has("response-charset") {
+		encoding = o.options.Value("response-charset")
 	}
 	notice := binaryNotice
 	if headers {
@@ -309,7 +309,7 @@ func (o *output) writeBody(reader io.Reader, contentType string, response, heade
 			data = bytes.ToValidUTF8(data, []byte("�"))
 		}
 		if o.formatting() && validMIME(media) {
-			if o.format["json.format"] == "true" && (strings.Contains(media, "json") || strings.Contains(media, "javascript") || strings.Contains(media, "text") || o.options.value("request-type") == "json") {
+			if o.format["json.format"] == "true" && (strings.Contains(media, "json") || strings.Contains(media, "javascript") || strings.Contains(media, "text") || o.options.Value("request-type") == "json") {
 				indent, _ := strconv.Atoi(o.format["json.indent"])
 				starts := []int{0}
 				if prefix := bytes.IndexAny(data, "{[\""); prefix > 0 {
@@ -346,7 +346,7 @@ func (o *output) writeBody(reader io.Reader, contentType string, response, heade
 		_, err := o.writer.Write(data)
 		return err
 	}
-	if o.options.has("stream") || media == "text/event-stream" || o.pretty == "none" {
+	if o.options.Has("stream") || media == "text/event-stream" || o.pretty == "none" {
 		scanner := bufio.NewScanner(reader)
 		scanner.Buffer(make([]byte, 4096), int(^uint(0)>>1))
 		scanner.Split(func(data []byte, atEOF bool) (int, []byte, error) {
@@ -409,7 +409,7 @@ func validMIME(media string) bool {
 
 type displayedUpload struct {
 	io.ReadCloser
-	output      *output
+	output      *Output
 	contentType string
 	headers     bool
 	lines       bool

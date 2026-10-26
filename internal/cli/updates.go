@@ -9,9 +9,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
-	"strings"
 	"time"
+
+	"httpie/internal/core"
 )
 
 type versionInfo struct {
@@ -25,12 +25,12 @@ func updateSettings() (string, bool) {
 		Disabled bool   `json:"disable_update_warnings"`
 		File     string `json:"version_info_file"`
 	}
-	data, _ := os.ReadFile(filepath.Join(configDir(), "config.json"))
+	data, _ := os.ReadFile(filepath.Join(core.ConfigDir(), "config.json"))
 	_ = json.Unmarshal(data, &config)
 	if config.File == "" {
-		config.File = filepath.Join(configDir(), "version_info.json")
+		config.File = filepath.Join(core.ConfigDir(), "version_info.json")
 	}
-	return expandPath(config.File), config.Disabled
+	return core.ExpandPath(config.File), config.Disabled
 }
 func readVersionInfo(path string) versionInfo {
 	var info versionInfo
@@ -71,33 +71,12 @@ func saveVersionInfo(path string, info versionInfo) error {
 	fields["last_fetched_date"] = info.LastFetched
 	fields["last_warned_date"] = info.LastWarned
 	fields["last_released_versions"] = info.Versions
-	return saveJSON(path, fields)
+	return core.SaveJSON(path, fields)
 }
 
-func newerVersion(candidate, current string) bool {
-	parse := func(value string) []int {
-		var version []int
-		parts := strings.Split(value, ".")
-		for _, part := range parts[:min(3, len(parts))] {
-			n, err := strconv.Atoi(strings.TrimSpace(part))
-			if err != nil {
-				break
-			}
-			version = append(version, n)
-		}
-		return version
-	}
-	a, b := parse(candidate), parse(current)
-	for i := 0; i < min(len(a), len(b)); i++ {
-		if a[i] != b[i] {
-			return a[i] > b[i]
-		}
-	}
-	return len(a) > len(b)
-}
 func updateMessage(info versionInfo) string {
 	latest := info.Versions["unknown"]
-	if latest == "" || !newerVersion(latest, version) {
+	if latest == "" || !core.NewerVersion(latest, core.Version) {
 		return ""
 	}
 	return fmt.Sprintf("A new HTTPie release (%s) is available.\nTo see how you can update, please visit https://httpie.io/docs/cli/unknown\n", latest)

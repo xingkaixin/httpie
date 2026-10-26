@@ -6,17 +6,20 @@
 
 ## 模块
 
+`internal/core` 是请求语义、传输、会话和格式化，接收与命令行相同的参数；`internal/cli` 是命令行进程外壳，只经由 core 的导出接口工作。
+
 | 文件 | 职责 |
 | --- | --- |
 | `cmd/http`、`cmd/https`、`cmd/httpie` | 进程入口，退出码 |
-| `internal/cli/options.go` | 参数定义、短参数组合、交错参数、重置语义 |
+| `internal/core/options.go` | 参数定义、短参数组合、交错参数、重置语义 |
 | `request.go`、`items.go`、`json.go`、`uploads.go` | URL、请求项、嵌套 JSON、文件、表单、可重放的 multipart 正文 |
 | `transport.go`、`tls_openssl.go` | HTTP/1.1、代理、连接、空闲超时、OpenSSL TLS |
-| `auth.go`、`netrc.go`、`run.go` | 认证、重定向、请求重放、信号取消、执行顺序 |
-| `output.go`、`colors.go`、`xml.go`、`xml_colors.go` | 输出选择、格式化、颜色、编码、流处理 |
-| `session.go`、`cookies.go` | 配置目录、默认参数、会话和 Cookie 持久化 |
+| `exchange.go`、`auth.go`、`netrc.go` | 认证、重定向、请求重放；把每条消息交给观察者，返回最后的响应 |
+| `output.go`、`colors.go`、`xml.go`、`xml_colors.go` | 输出选择、格式化、颜色、编码、流处理；命令行输出是 exchange 的一个观察者 |
+| `session.go`、`cookies.go` | 配置目录、默认参数、会话和 Cookie 持久化、会话升级 |
+| `internal/cli/run.go` | 执行顺序、信号取消、`--check-status` 与退出码 |
 | `download.go` | 文件名、续传、完整性校验、进度显示 |
-| `manager.go`、`manual.go`、`updates.go` | 帮助、参数导出、会话升级、更新检查 |
+| `manager.go`、`manual.go`、`updates.go` | 帮助、参数导出、管理命令、更新检查 |
 | `stdin.go` | stdin 首次数据观察及延迟警告 |
 
 所有实现均位于 `internal/`。没有公开库接口、插件框架或额外服务进程。

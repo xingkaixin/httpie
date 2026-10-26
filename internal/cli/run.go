@@ -16,6 +16,8 @@ import (
 	"syscall"
 
 	"golang.org/x/term"
+
+	"httpie/internal/core"
 )
 
 func Run(program string, args []string) int {
@@ -40,7 +42,7 @@ func run(program string, args []string, stdin io.Reader, stdout, stderr io.Write
 	if program == "httpie" {
 		return runManager(args, stdout, stderr)
 	}
-	configured, configErr := configArgs(args)
+	configured, configErr := core.ConfigArgs(args)
 	if configErr != nil {
 		var syntax *json.SyntaxError
 		var fileErr *os.PathError
@@ -51,45 +53,41 @@ func run(program string, args []string, stdin io.Reader, stdout, stderr io.Write
 	} else {
 		args = configured
 	}
-	o, err := parseOptions(args)
+	o, err := core.ParseOptions(args)
 	if err != nil {
 		return 1, err
 	}
-	if o.has("debug") || o.has("traceback") {
+	if o.Has("debug") || o.Has("traceback") {
 		defer func() {
 			if err != nil {
 				_, _ = stderr.Write(debug.Stack())
 			}
 		}()
 	}
-	if o.has("version") {
-		_, err = fmt.Fprintln(stdout, version)
+	if o.Has("version") {
+		_, err = fmt.Fprintln(stdout, core.Version)
 		return 0, err
 	}
-	if o.has("manual") {
+	if o.Has("manual") {
 		return 0, printManual(program, stdin, stdout, stderr, stdinTTY && stdoutTTY)
 	}
-	if o.has("help") {
+	if o.Has("help") {
 		_, err = io.WriteString(stdout, formatHelp(helpWidth(stdout)))
 		return 0, err
 	}
-	if o.has("debug") {
-		fmt.Fprintf(stderr, "HTTPie %s\nGo %s\nPlatform %s/%s\nConfig directory: %s\n", version, runtime.Version(), runtime.GOOS, runtime.GOARCH, configDir())
+	if o.Has("debug") {
+		fmt.Fprintf(stderr, "HTTPie %s\nGo %s\nPlatform %s/%s\nConfig directory: %s\n", core.Version, runtime.Version(), runtime.GOOS, runtime.GOARCH, core.ConfigDir())
 	}
-	if o.has("debug") && len(o.args) == 0 {
+	if o.Has("debug") && len(o.Args) == 0 {
 		return 0, nil
-	}
-	if o.has("offline") {
-		delete(o.values, "download")
-		delete(o.values, "continue")
 	}
 	writer, tty := stdout, stdoutTTY
 	var outputFile *os.File
-	if o.has("download") {
+	if o.Has("download") {
 		writer = stderr
 		tty = stderrTTY
-	} else if o.has("output") {
-		if o.value("output") == "-" {
+	} else if o.Has("output") {
+		if o.Value("output") == "-" {
 			var ok bool
 			outputFile, ok = stdout.(*os.File)
 			if !ok {
@@ -99,7 +97,7 @@ func run(program string, args []string, stdin io.Reader, stdout, stderr io.Write
 				err = outputFile.Truncate(0)
 			}
 		} else {
-			outputFile, err = os.OpenFile(expandPath(o.value("output")), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0666)
+			outputFile, err = os.OpenFile(core.ExpandPath(o.Value("output")), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0666)
 		}
 		if err != nil {
 			return 1, err
@@ -108,31 +106,31 @@ func run(program string, args []string, stdin io.Reader, stdout, stderr io.Write
 		writer = outputFile
 		tty = false
 	}
-	if o.has("quiet") && !(o.has("output") && !o.has("download")) {
+	if o.Has("quiet") && !(o.Has("output") && !o.Has("download")) {
 		writer = io.Discard
 	}
-	out, err := newOutput(writer, tty, o)
+	out, err := core.NewOutput(writer, tty, o)
 	if err != nil {
 		return 1, err
 	}
-	if !stdinTTY && !o.has("ignore-stdin") && !o.has("offline") {
+	if !stdinTTY && !o.Has("ignore-stdin") && !o.Has("offline") {
 		var stop func()
 		stdin, stop = watchStdin(stdin, stderr)
 		defer stop()
 	}
-	ex, err := prepare(o, program, stdin, stdinTTY)
+	ex, err := core.Prepare(o, program, stdin, stdinTTY)
 	if err != nil {
 		return 1, err
 	}
-	defer ex.close()
-	checkUpdateWarnings(stderr, program, stdoutTTY && o.has("quiet"))
-	if err = ex.open(); err != nil {
+	defer ex.Close()
+	checkUpdateWarnings(stderr, program, stdoutTTY && o.Has("quiet"))
+	if err = ex.Open(); err != nil {
 		return 1, err
 	}
-	if o.has("offline") {
-		err = out.writeRequest(ex.request, out.selection())
+	if o.Has("offline") {
+		err = out.WriteRequest(ex.Request, out.Selection())
 		if err == nil {
-			err = ex.saveSession()
+			err = ex.SaveSession()
 		}
 		if err != nil {
 			return 1, err
@@ -140,8 +138,8 @@ func run(program string, args []string, stdin io.Reader, stdout, stderr io.Write
 		return 0, nil
 	}
 	var resume int64
-	if o.has("download") {
-		resume, err = prepareDownload(ex.request, o)
+	if o.Has("download") {
+		resume, err = prepareDownload(ex.Request, o)
 		if err != nil {
 			return 1, err
 		}
@@ -154,11 +152,11 @@ func run(program string, args []string, stdin io.Reader, stdout, stderr io.Write
 		}
 	})
 	defer stopInput()
-	initialURL := ex.request.URL
-	response, err := ex.do(ctx, out)
+	initialURL := ex.Request.URL
+	response, err := ex.Do(ctx, out)
 	if err == nil {
-		code, err = finish(ex, response, initialURL, out, stdout, stderr, stdoutTTY, resume)
-	} else if limit := redirectLimitError(0); errors.As(err, &limit) {
+		code, err = finish(ex, o, response, initialURL, stdout, stderr, stdoutTTY, stderrTTY, resume)
+	} else if limit := core.RedirectLimitError(0); errors.As(err, &limit) {
 		code = 6
 	} else {
 		code = 1
@@ -167,7 +165,7 @@ func run(program string, args []string, stdin io.Reader, stdout, stderr io.Write
 		return 130, nil
 	}
 	if err == nil {
-		if err = ex.saveSession(); err != nil {
+		if err = ex.SaveSession(); err != nil {
 			code = 1
 		}
 	}
@@ -182,29 +180,28 @@ func run(program string, args []string, stdin io.Reader, stdout, stderr io.Write
 
 // finish handles the last response: its status for --check-status, and
 // its body for --download.
-func finish(ex *exchange, response *http.Response, initialURL *url.URL, out *output, stdout, stderr io.Writer, stdoutTTY bool, resume int64) (int, error) {
-	o := ex.options
+func finish(ex *core.Exchange, o core.Options, response *http.Response, initialURL *url.URL, stdout, stderr io.Writer, stdoutTTY, stderrTTY bool, resume int64) (int, error) {
 	code := 0
-	if o.has("check-status") || o.has("download") {
+	if o.Has("check-status") || o.Has("download") {
 		switch {
 		case response.StatusCode >= 500:
 			code = 5
 		case response.StatusCode >= 400:
 			code = 4
-		case response.StatusCode >= 300 && !o.has("follow") && !o.has("download"):
+		case response.StatusCode >= 300 && !o.Has("follow") && !o.Has("download"):
 			code = 3
 		}
 	}
-	if code == 0 && o.has("download") {
-		if err := download(response, initialURL, o, stdout, stderr, stdoutTTY, out.tty, resume); err != nil {
-			ex.close()
+	if code == 0 && o.Has("download") {
+		if err := download(response, initialURL, o, stdout, stderr, stdoutTTY, stderrTTY, resume); err != nil {
+			ex.Close()
 			response.Body.Close()
 			return 1, err
 		}
 	}
-	ex.close()
+	ex.Close()
 	response.Body.Close()
-	if code != 0 && !stdoutTTY && o.count("quiet") < 2 {
+	if code != 0 && !stdoutTTY && o.Count("quiet") < 2 {
 		fmt.Fprintf(stderr, "\nhttp: warning: HTTP %s\n", response.Status)
 	}
 	return code, nil

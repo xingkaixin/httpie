@@ -1,4 +1,4 @@
-package cli
+package core
 
 import (
 	"bytes"
@@ -83,7 +83,7 @@ func multipartBody(fields []item, boundary string) (bodySource, string, error) {
 		h := textproto.MIMEHeader{}
 		if it.sep == "@" {
 			filename, ct, _ := strings.Cut(it.value, ";type=")
-			filename = expandPath(filename)
+			filename = ExpandPath(filename)
 			if ct == "" {
 				ct = fileMIME(filename)
 			}

@@ -17,19 +17,23 @@ type kv struct {
 }
 
 type request struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	Method   string `json:"method"`
-	URL      string `json:"url"`
-	Params   []kv   `json:"params,omitempty"`
-	Headers  []kv   `json:"headers,omitempty"`
-	BodyType string `json:"bodyType"`
-	Body     string `json:"body,omitempty"`
-	Form     []kv   `json:"form,omitempty"`
-	AuthType string `json:"authType"`
-	User     string `json:"user,omitempty"`
-	Password string `json:"password,omitempty"`
-	Token    string `json:"token,omitempty"`
+	ID       string  `json:"id"`
+	Name     string  `json:"name"`
+	Method   string  `json:"method"`
+	URL      string  `json:"url"`
+	Params   []kv    `json:"params,omitempty"`
+	Headers  []kv    `json:"headers,omitempty"`
+	BodyType string  `json:"bodyType"`
+	Body     string  `json:"body,omitempty"`
+	Form     []kv    `json:"form,omitempty"`
+	AuthType string  `json:"authType"`
+	User     string  `json:"user,omitempty"`
+	Password string  `json:"password,omitempty"`
+	Token    string  `json:"token,omitempty"`
+	BodyFile string  `json:"bodyFile,omitempty"`
+	Follow   bool    `json:"follow,omitempty"`
+	Insecure bool    `json:"insecure,omitempty"`
+	Timeout  float64 `json:"timeout,omitempty"`
 }
 
 type collection struct {
@@ -50,16 +54,18 @@ const (
 	bodyJSON = "JSON"
 	bodyText = "Text"
 	bodyForm = "Form"
+	bodyFile = "File"
 
 	authNone   = "None"
 	authBasic  = "Basic"
+	authDigest = "Digest"
 	authBearer = "Bearer"
 )
 
 var (
 	methods   = []string{"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"}
-	bodyTypes = []string{bodyNone, bodyJSON, bodyText, bodyForm}
-	authTypes = []string{authNone, authBasic, authBearer}
+	bodyTypes = []string{bodyNone, bodyJSON, bodyText, bodyForm, bodyFile}
+	authTypes = []string{authNone, authBasic, authDigest, authBearer}
 	idSeq     atomic.Int64
 )
 

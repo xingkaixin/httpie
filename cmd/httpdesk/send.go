@@ -4,152 +4,214 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
-	"maps"
-	"mime"
 	"net/http"
-	"net/url"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
-	"unicode/utf8"
+
+	"httpie/internal/core"
 )
 
 const maxBody = 10 << 20
 
+type hop struct {
+	Status   string
+	Code     int
+	Location string
+}
+
 type response struct {
 	Status    string
 	Code      int
-	Headers   [][2]string
+	Headers   []core.Header
 	Body      string
 	JSON      bool
 	Size      int
 	Truncated bool
 	Duration  time.Duration
+	Redirects []hop
 	Err       string
 }
 
-// normalizeURL fills in the scheme the way HTTPie does: ":3000/x" is localhost,
-// local hosts use http, everything else https.
-func normalizeURL(raw string) string {
-	raw = strings.TrimSpace(raw)
-	switch {
-	case strings.Contains(raw, "://"):
-		return raw
-	case strings.HasPrefix(raw, ":"):
-		return "http://localhost" + raw
-	case strings.HasPrefix(raw, "localhost"), strings.HasPrefix(raw, "127."), strings.HasPrefix(raw, "0.0.0.0"):
-		return "http://" + raw
-	}
-	return "https://" + raw
-}
+// sendFlags go with every request the app sends, but not into the command
+// it copies: --all reports redirects, --pretty=format formats the body.
+var sendFlags = []string{"--all", "--pretty=format"}
 
-func requestBody(r *request) (body, contentType string) {
-	switch r.BodyType {
-	case bodyJSON:
-		return r.Body, "application/json"
-	case bodyText:
-		return r.Body, "text/plain; charset=utf-8"
-	case bodyForm:
-		vals := url.Values{}
-		for _, f := range enabled(r.Form) {
-			vals.Add(f.Key, f.Value)
-		}
-		return vals.Encode(), "application/x-www-form-urlencoded"
-	}
-	return "", ""
-}
+// keySeparators are what parseItem splits an item at, which a key escapes.
+var keySeparators = strings.NewReplacer(":", `\:`, ";", `\;`, "=", `\=`, "@", `\@`)
 
-func requestURL(r *request) (string, error) {
-	u, err := url.Parse(normalizeURL(r.URL))
-	if err != nil {
-		return "", err
-	}
-	if u.Host == "" {
-		return "", errors.New("请输入请求地址")
-	}
-	if params := enabled(r.Params); len(params) > 0 {
-		q := u.Query()
-		for _, p := range params {
-			q.Add(p.Key, p.Value)
-		}
-		u.RawQuery = q.Encode()
-	}
-	return u.String(), nil
-}
-
-func buildRequest(ctx context.Context, r *request) (*http.Request, error) {
-	target, err := requestURL(r)
-	if err != nil {
-		return nil, err
-	}
-	body, contentType := requestBody(r)
-	var reader io.Reader
-	if body != "" {
-		reader = strings.NewReader(body)
-	}
-	req, err := http.NewRequestWithContext(ctx, r.Method, target, reader)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("User-Agent", "HTTPDesk/0.1")
-	if contentType != "" {
-		req.Header.Set("Content-Type", contentType)
-	}
+// requestArgs returns the http command's arguments for r.
+func requestArgs(r *request) []string {
+	var opts, items []string
 	switch r.AuthType {
 	case authBasic:
-		req.SetBasicAuth(r.User, r.Password)
+		opts = append(opts, "--auth="+r.User+":"+r.Password)
+	case authDigest:
+		opts = append(opts, "--auth-type=digest", "--auth="+r.User+":"+r.Password)
 	case authBearer:
-		req.Header.Set("Authorization", "Bearer "+r.Token)
+		opts = append(opts, "--auth-type=bearer", "--auth="+r.Token)
 	}
+	if r.Follow {
+		opts = append(opts, "--follow")
+	}
+	if r.Insecure {
+		opts = append(opts, "--verify=no")
+	}
+	if r.Timeout > 0 {
+		opts = append(opts, "--timeout="+strconv.FormatFloat(r.Timeout, 'f', -1, 64))
+	}
+	for _, p := range enabled(r.Params) {
+		items = append(items, keySeparators.Replace(p.Key)+"=="+p.Value)
+	}
+	contentType := false
 	for _, h := range enabled(r.Headers) {
-		req.Header.Set(h.Key, h.Value)
+		contentType = contentType || strings.EqualFold(h.Key, "Content-Type")
+		if h.Value == "" {
+			items = append(items, keySeparators.Replace(h.Key)+";")
+		} else {
+			items = append(items, keySeparators.Replace(h.Key)+":"+h.Value)
+		}
 	}
-	return req, nil
+	switch r.BodyType {
+	case bodyJSON, bodyText:
+		if r.Body != "" {
+			opts = append(opts, "--raw="+r.Body)
+		}
+		// --raw sends JSON unless told otherwise.
+		if r.BodyType == bodyText && !contentType {
+			items = append(items, "Content-Type:text/plain; charset=utf-8")
+		}
+	case bodyForm:
+		opts = append(opts, "--form")
+		for _, f := range enabled(r.Form) {
+			items = append(items, keySeparators.Replace(f.Key)+"="+f.Value)
+		}
+	case bodyFile:
+		if r.BodyFile != "" {
+			items = append(items, "@"+r.BodyFile)
+		}
+	}
+	positional := append([]string{r.Method, r.URL}, items...)
+	if slices.ContainsFunc(positional, func(s string) bool { return strings.HasPrefix(s, "-") }) {
+		opts = append(opts, "--")
+	}
+	return append(opts, positional...)
 }
 
-func do(client *http.Client, req *http.Request) *response {
-	start := time.Now()
-	resp, err := client.Do(req)
-	if err != nil {
-		if errors.Is(err, context.Canceled) {
-			return &response{Err: "已取消"}
+var shellSafe = regexp.MustCompile(`^[\w@%+=:,./-]+$`)
+
+func command(args []string) string {
+	parts := []string{"http"}
+	for _, a := range args {
+		if !shellSafe.MatchString(a) {
+			a = "'" + strings.ReplaceAll(a, "'", `'\''`) + "'"
 		}
-		return &response{Err: err.Error(), Duration: time.Since(start)}
+		parts = append(parts, a)
 	}
-	defer resp.Body.Close()
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxBody+1))
-	res := &response{Status: resp.Status, Code: resp.StatusCode, Duration: time.Since(start), Size: len(data)}
+	return strings.Join(parts, " ")
+}
+
+// recorder keeps the responses an exchange shows: the redirects, then the
+// last one.
+type recorder struct {
+	hops    []hop
+	headers []core.Header
+}
+
+func (rec *recorder) Request(*core.Request, bool) error { return nil }
+func (rec *recorder) Sent(*core.Request) error          { return nil }
+func (rec *recorder) Response(r *http.Response, headers []core.Header, _ time.Time) error {
+	rec.hops = append(rec.hops, hop{r.Status, r.StatusCode, r.Header.Get("Location")})
+	rec.headers = headers
+	return nil
+}
+
+func send(ctx context.Context, args []string) *response {
+	res, err := exchange(ctx, args)
+	if ctx.Err() != nil {
+		return &response{Err: "已取消"}
+	}
 	if err != nil {
-		res.Err = err.Error()
+		return &response{Err: err.Error()}
+	}
+	return res
+}
+
+func exchange(ctx context.Context, args []string) (*response, error) {
+	o, err := core.ParseOptions(append(slices.Clone(sendFlags), args...))
+	if err != nil {
+		return nil, err
+	}
+	ex, err := core.Prepare(o, "http", nil, true)
+	if err != nil {
+		return nil, err
+	}
+	defer ex.Close()
+	if err = ex.Open(); err != nil {
+		return nil, err
+	}
+	start := time.Now()
+	rec := &recorder{}
+	resp, err := ex.Do(ctx, rec)
+	if err != nil {
+		return nil, err
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxBody+1))
+	ex.Close()
+	resp.Body.Close()
+	if err != nil {
+		return nil, err
+	}
+	res := &response{
+		Status:    resp.Status,
+		Code:      resp.StatusCode,
+		Headers:   rec.headers,
+		Size:      len(data),
+		Duration:  time.Since(start),
+		Redirects: rec.hops[:len(rec.hops)-1],
 	}
 	if len(data) > maxBody {
 		data, res.Truncated = data[:maxBody], true
 	}
-	for k, vs := range resp.Header {
-		for _, v := range vs {
-			res.Headers = append(res.Headers, [2]string{k, v})
-		}
-	}
-	slices.SortFunc(res.Headers, func(a, b [2]string) int { return strings.Compare(a[0], b[0]) })
-	res.Body, res.JSON = displayBody(resp.Header.Get("Content-Type"), data)
-	return res
+	res.Body, res.JSON = displayBody(o, resp, rec.headers, data)
+	return res, nil
 }
 
-func displayBody(contentType string, data []byte) (string, bool) {
-	mediaType, _, _ := mime.ParseMediaType(contentType)
-	if strings.HasSuffix(mediaType, "json") || json.Valid(data) {
-		var out bytes.Buffer
-		if json.Indent(&out, data, "", "  ") == nil {
-			return out.String(), true
-		}
+// displayBody formats a response body as the http command does with
+// --pretty=format.
+func displayBody(o core.Options, resp *http.Response, headers []core.Header, data []byte) (string, bool) {
+	encoded := *resp
+	encoded.Body = io.NopCloser(bytes.NewReader(data))
+	reader, closeBody, err := core.DecodedBody(&encoded)
+	if err != nil {
+		return err.Error(), false
 	}
-	if !utf8.Valid(data) {
-		return fmt.Sprintf("<%s 二进制内容，%s>", mediaType, formatSize(len(data))), false
+	plain, err := io.ReadAll(reader)
+	closeBody()
+	if err != nil {
+		plain = data
 	}
-	return string(data), false
+	if bytes.IndexByte(plain, 0) >= 0 {
+		return fmt.Sprintf("<二进制内容，%s>", formatSize(len(plain))), false
+	}
+	decoded := *resp
+	decoded.Header = resp.Header.Clone()
+	decoded.Header.Del("Content-Encoding")
+	decoded.Body = io.NopCloser(bytes.NewReader(plain))
+	var out bytes.Buffer
+	printer, err := core.NewOutput(&out, true, o)
+	if err == nil {
+		err = printer.WriteResponse(&decoded, headers, "b", time.Time{})
+	}
+	if err != nil {
+		return string(plain), false
+	}
+	text := strings.TrimRight(out.String(), "\n")
+	return text, json.Valid([]byte(text))
 }
 
 func formatSize(n int) string {
@@ -160,27 +222,4 @@ func formatSize(n int) string {
 		return fmt.Sprintf("%.1f KB", float64(n)/1024)
 	}
 	return fmt.Sprintf("%.1f MB", float64(n)/(1<<20))
-}
-
-func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
-
-func curlCommand(r *request) (string, error) {
-	req, err := buildRequest(context.Background(), r)
-	if err != nil {
-		return "", err
-	}
-	parts := []string{"curl"}
-	if req.Method != http.MethodGet {
-		parts = append(parts, "-X", req.Method)
-	}
-	parts = append(parts, shellQuote(req.URL.String()))
-	for _, k := range slices.Sorted(maps.Keys(req.Header)) {
-		for _, v := range req.Header[k] {
-			parts = append(parts, "-H", shellQuote(k+": "+v))
-		}
-	}
-	if body, _ := requestBody(r); body != "" {
-		parts = append(parts, "--data-raw", shellQuote(body))
-	}
-	return strings.Join(parts, " \\\n  "), nil
 }

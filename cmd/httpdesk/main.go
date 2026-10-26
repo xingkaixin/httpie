@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
@@ -58,7 +57,6 @@ type app struct {
 	path      string
 	saved     []byte
 	ws        *workspace
-	client    *http.Client
 	responses map[string]*response
 	inflight  map[string]context.CancelFunc
 	url       ui.Handle
@@ -222,13 +220,9 @@ func (a *app) header(c *ui.Context, col *collection, r *request) {
 			}
 		})
 		ui.Spacer(c)
-		if ui.Button(c, "复制 cURL").Clicked() {
-			if cmd, err := curlCommand(r); err != nil {
-				c.AddToast(ui.Toast{Title: "无法生成 cURL", Description: err.Error(), Type: "error"})
-			} else {
-				c.WriteClipboard(cmd)
-				c.Toast("已复制 cURL 命令")
-			}
+		if ui.Button(c, "复制命令").Tooltip("复制为 http 命令").Clicked() {
+			c.WriteClipboard(command(requestArgs(r)))
+			c.Toast("已复制 http 命令")
 		}
 	})
 }
@@ -275,7 +269,7 @@ func (a *app) requestPane(c *ui.Context, r *request) {
 			if r.AuthType != authNone {
 				auth += " · " + r.AuthType
 			}
-			ui.Segmented(c, &a.reqTab, withCount("Params", r.Params), withCount("Headers", r.Headers), body, auth).Label("请求内容")
+			ui.Segmented(c, &a.reqTab, withCount("Params", r.Params), withCount("Headers", r.Headers), body, auth, "Settings").Label("请求内容")
 		})
 		switch a.reqTab {
 		case 0:
@@ -286,6 +280,8 @@ func (a *app) requestPane(c *ui.Context, r *request) {
 			a.bodyEditor(c, r)
 		case 3:
 			authEditor(c, r)
+		case 4:
+			settingsEditor(c, r)
 		}
 	})
 }
@@ -348,6 +344,15 @@ func (a *app) bodyEditor(c *ui.Context, r *request) {
 			ui.Column(c).Grow(1).Center().Children(func() { caption(c, "此请求不带 Body") })
 		case bodyForm:
 			ui.Scroll(c).Grow(1).Children(func() { kvEditor(c, &r.Form, "字段", "值") })
+		case bodyFile:
+			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+				name := r.BodyFile
+				if name == "" {
+					name = "未选择文件"
+				}
+				ui.Text(c, name).Font("monospace").FontSize(12).Grow(1).TextColor(t.TextMuted)
+				ui.Button(c, "选择文件…").OnClick(func() { a.chooseFile(func(path string) { r.BodyFile = path }) })
+			})
 		default:
 			ed := ui.TextAreaBase(c.Key("body-"+r.ID), &r.Body).Label("Body").Font("monospace").FontSize(12.5).
 				Grow(1).Padding(10).Radius(8).Border(1, t.Border).Background(t.Surface)
@@ -364,12 +369,23 @@ func authEditor(c *ui.Context, r *request) {
 		switch r.AuthType {
 		case authNone:
 			caption(c, "此请求不带认证信息")
-		case authBasic:
+		case authBasic, authDigest:
 			ui.Field(c, "用户名", func() { ui.TextInput(c, &r.User) })
 			ui.Field(c, "密码", func() { ui.TextInput(c, &r.Password).Password() })
 		case authBearer:
 			ui.Field(c, "Token", func() { ui.TextInput(c, &r.Token).Font("monospace") })
 		}
+	})
+}
+
+func settingsEditor(c *ui.Context, r *request) {
+	ui.Column(c).Grow(1).Padding(0, 16, 16, 16).Gap(12).Children(func() {
+		ui.Checkbox(c, &r.Follow, "跟随重定向")
+		verify := !r.Insecure
+		if ui.Checkbox(c, &verify, "校验 TLS 证书").Changed() {
+			r.Insecure = !verify
+		}
+		ui.Field(c, "超时（秒，0 为不限）", func() { ui.NumberInput(c, &r.Timeout, 0, 3600, 1).Width(120) })
 	})
 }
 
@@ -390,10 +406,10 @@ func (a *app) responsePane(c *ui.Context, r *request) {
 			}
 			color := statusColor(res.Code)
 			ui.Row(c).Padding(3, 8).Radius(6).Background(color.Alpha(0.14)).Children(func() {
-				ui.Text(c, res.Status).FontSize(12).FontWeight(600).TextColor(color)
+				ui.Text(c, res.Status).FontSize(12).FontWeight(600).TextColor(color).SingleLine()
 			})
-			caption(c, res.Duration.Round(time.Millisecond).String()).FontFeatures("tnum")
-			caption(c, formatSize(res.Size))
+			caption(c, res.Duration.Round(time.Millisecond).String()).FontFeatures("tnum").SingleLine()
+			caption(c, formatSize(res.Size)).SingleLine()
 			if iconButton(c, iconCopy, "复制响应").Clicked() {
 				c.WriteClipboard(res.Body)
 				c.Toast("已复制响应内容")
@@ -419,10 +435,20 @@ func (a *app) responsePane(c *ui.Context, r *request) {
 			})
 		case a.resTab == 1:
 			ui.Scroll(c).Grow(1).Padding(0, 16, 16, 16).Gap(6).Selectable().Children(func() {
+				if len(res.Redirects) > 0 {
+					caption(c, "重定向")
+					for _, h := range res.Redirects {
+						ui.Row(c).Gap(12).AlignItems(ui.Start).Children(func() {
+							ui.Text(c, h.Status).FontSize(12).FontWeight(600).TextColor(statusColor(h.Code)).Width(180).Shrink(0)
+							ui.Text(c, h.Location).Font("monospace").FontSize(12).TextColor(t.TextMuted).Grow(1)
+						})
+					}
+					ui.Divider(c).Margin(6, 0)
+				}
 				for _, h := range res.Headers {
 					ui.Row(c).Gap(12).AlignItems(ui.Start).Children(func() {
-						ui.Text(c, h[0]).Font("monospace").FontSize(12).FontWeight(600).Width(180).Shrink(0)
-						ui.Text(c, h[1]).Font("monospace").FontSize(12).TextColor(t.TextMuted).Grow(1)
+						ui.Text(c, h.Name).Font("monospace").FontSize(12).FontWeight(600).Width(180).Shrink(0)
+						ui.Text(c, h.Value).Font("monospace").FontSize(12).TextColor(t.TextMuted).Grow(1)
 					})
 				}
 			})
@@ -448,22 +474,27 @@ func (a *app) send() {
 		return
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	req, err := buildRequest(ctx, r)
-	if err != nil {
-		cancel()
-		a.responses[r.ID] = &response{Err: err.Error()}
-		return
-	}
 	a.inflight[r.ID] = cancel
-	id := r.ID
+	id, args := r.ID, requestArgs(r)
 	go func() {
-		res := do(a.client, req)
+		res := send(ctx, args)
 		cancel()
 		a.win.Update(func() {
 			delete(a.inflight, id)
 			a.responses[id] = res
 			a.resTab = 0
 		})
+	}()
+}
+
+// chooseFile shows a dialog choosing a file, and calls set with its path.
+func (a *app) chooseFile(set func(path string)) {
+	go func() {
+		paths, err := mygo.Dialog.Open(mygo.OpenDialogOptions{Parent: a.win, Title: "选择文件"})
+		if err != nil || len(paths) == 0 {
+			return
+		}
+		a.win.Update(func() { set(paths[0]) })
 	}()
 }
 
@@ -550,7 +581,6 @@ func main() {
 	}
 	a := &app{
 		path: path, ws: ws,
-		client:    &http.Client{Timeout: 60 * time.Second},
 		responses: map[string]*response{},
 		inflight:  map[string]context.CancelFunc{},
 	}

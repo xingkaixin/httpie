@@ -19,11 +19,12 @@ func TestSendRequest(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	r := newRequest("t", "POST", srv.URL)
+	env := &environment{Name: "test", Vars: []kvtable.Pair{{On: true, Key: "base", Value: srv.URL}, {On: true, Key: "token", Value: "abc", Kind: kindSecret}}}
+	r := newRequest("t", "POST", "{{base}}")
 	r.Params = []kvtable.Pair{{On: true, Key: "q", Value: "go"}, {On: false, Key: "skip", Value: "x"}}
-	r.AuthType, r.Token = authBearer, "abc"
+	r.AuthType, r.Token = authBearer, "{{ token }}"
 	r.BodyType, r.Body = bodyJSON, `{"n":1}`
-	res := send(context.Background(), requestArgs(r))
+	res := send(context.Background(), requestArgs(env.resolve(r)))
 	want := "{\n    \"auth\": \"Bearer abc\",\n    \"body\": {\n        \"n\": 1\n    },\n    \"q\": \"go\"\n}"
 	if res.Code != 200 || !res.JSON || res.Body != want {
 		t.Errorf("response %d json=%v body %q err %q", res.Code, res.JSON, res.Body, res.Err)

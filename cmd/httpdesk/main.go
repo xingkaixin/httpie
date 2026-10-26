@@ -15,6 +15,7 @@ import (
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 	"github.com/xingkaixin/mygo-native-ui/ui/kvtable"
+	"github.com/xingkaixin/mygo-native-ui/ui/templatefield"
 )
 
 func icon(shapes string) *ui.SVG {
@@ -71,6 +72,7 @@ type app struct {
 	renameTo   string
 	deleting   *collection
 	deleteOpen bool
+	envOpen    bool
 }
 
 func (a *app) saveIfChanged() {
@@ -245,8 +247,9 @@ func (a *app) header(c *ui.Context, col *collection, r *request) {
 			}
 		})
 		ui.Spacer(c)
+		a.envMenu(c, true)
 		if ui.Button(c, "复制命令").Tooltip("复制为 http 命令").Clicked() {
-			c.WriteClipboard(command(requestArgs(r)))
+			c.WriteClipboard(command(requestArgs(a.env().resolve(r))))
 			c.Toast("已复制 http 命令")
 		}
 	})
@@ -271,7 +274,7 @@ func (a *app) urlBar(c *ui.Context, r *request) {
 				}
 			}
 		})
-		ui.TextInputBase(c.Key("url-"+r.ID), &r.URL).Bind(&a.url).Placeholder("httpbin.org/get，或 :3000/api").Label("URL").
+		templatefield.Input(c.Key("url-"+r.ID), &r.URL, a.env()).Bind(&a.url).Placeholder("httpbin.org/get，或 :3000/api").Label("URL").
 			Font("monospace").Grow(1).Padding(6, 4).OnSubmit(a.send)
 		if sending {
 			ui.Button(c, "取消").OnClick(func() { a.inflight[r.ID]() })
@@ -301,10 +304,10 @@ func (a *app) requestPane(c *ui.Context, r *request) {
 			ui.Scroll(c).Grow(1).Padding(0, 16, 16, 16).Gap(6).Children(func() {
 				ui.Row(c).Justify(ui.End).Children(func() { a.bulkButton(c) })
 				if a.reqTab == 0 {
-					kvtable.EditorWith(c.Key("params-"+r.ID), &r.Params, kvtable.Options{KeyLabel: "参数", ValueLabel: "值", Reorder: true, Bulk: &a.bulk})
+					kvtable.EditorWith(c.Key("params-"+r.ID), &r.Params, kvtable.Options{KeyLabel: "参数", ValueLabel: "值", Ranges: a.ranges(c), Reorder: true, Bulk: &a.bulk})
 				} else {
 					kvtable.EditorWith(c.Key("headers-"+r.ID), &r.Headers, kvtable.Options{
-						KeyLabel: "Header", ValueLabel: "值", Keys: headerNames, Values: headerValues, Reorder: true, Bulk: &a.bulk,
+						KeyLabel: "Header", ValueLabel: "值", Keys: headerNames, Values: headerValues, Ranges: a.ranges(c), Reorder: true, Bulk: &a.bulk,
 					})
 				}
 			})
@@ -343,7 +346,7 @@ func (a *app) bodyEditor(c *ui.Context, r *request) {
 		case bodyForm:
 			ui.Scroll(c).Grow(1).Children(func() {
 				kvtable.EditorWith(c.Key("form-"+r.ID), &r.Form, kvtable.Options{
-					KeyLabel: "字段", ValueLabel: "值", Kinds: formKinds, Choose: a.chooseFile, Reorder: true,
+					KeyLabel: "字段", ValueLabel: "值", Kinds: formKinds, Choose: a.chooseFile, Ranges: a.ranges(c), Reorder: true,
 				})
 			})
 		case bodyFile:
@@ -490,7 +493,7 @@ func (a *app) send() {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	a.inflight[r.ID] = cancel
-	id, args := r.ID, requestArgs(r)
+	id, args := r.ID, requestArgs(a.env().resolve(r))
 	go func() {
 		res := send(ctx, args)
 		cancel()
@@ -558,6 +561,7 @@ func (a *app) deleteRequest(c *ui.Context, col *collection, r *request) {
 }
 
 func (a *app) dialogs(c *ui.Context) {
+	a.envDialog(c)
 	ui.Modal(c, &a.renameOpen, func() {
 		rename := func() {
 			if a.renameTo != "" {

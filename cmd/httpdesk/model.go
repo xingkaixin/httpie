@@ -40,9 +40,11 @@ type collection struct {
 }
 
 type workspace struct {
-	Collections []*collection `json:"collections"`
-	Selected    string        `json:"selected"`
-	Split       float32       `json:"split"`
+	Collections  []*collection  `json:"collections"`
+	Environments []*environment `json:"environments,omitempty"`
+	Env          string         `json:"env,omitempty"`
+	Selected     string         `json:"selected"`
+	Split        float32        `json:"split"`
 }
 
 const (

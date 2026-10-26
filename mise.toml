@@ -6,7 +6,11 @@ CGO_ENABLED = "1"
 
 [tasks.build]
 description = "Build the three CLI commands"
-run = "go build -trimpath -o bin/ ./cmd/..."
+run = "go build -trimpath -o bin/ ./cmd/http ./cmd/https ./cmd/httpie"
+
+[tasks.dev]
+description = "Run the desktop app with live reload"
+run = "go tool mygo dev"
 
 [tasks.install]
 description = "Build and install CLI commands"
@@ -22,7 +26,7 @@ run = "go test ./..."
 
 [tasks.check]
 description = "Check formatting, static analysis and race safety"
-run = "test -z \"$(gofmt -l cmd internal)\" && go vet ./... && go test -race ./..."
+run = "test -z \"$(gofmt -l cmd internal)\" && go vet ./... && go tool mygo vet ./cmd/httpdesk && go test -race ./..."
 
 [tasks.parity]
 description = "Compare the Go CLI with the supplied Python baseline"

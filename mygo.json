@@ -1,0 +1,8 @@
+{
+  "name": "HTTP Desk",
+  "identifier": "me.xingkaixin.httpdesk",
+  "version": "0.1.0",
+  "main": "./cmd/httpdesk",
+  "icon": "cmd/httpdesk/icon.png",
+  "out": "build"
+}

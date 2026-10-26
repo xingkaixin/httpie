@@ -526,3 +526,13 @@ func (r *request) moveHeaderBefore(name, before string) {
 		}
 	}
 }
+func (r *request) deleteHeader(name string) {
+	r.Header.Del(name)
+	for i := 0; i < len(r.headers); {
+		if strings.EqualFold(r.headers[i].Name, name) {
+			r.headers = append(r.headers[:i], r.headers[i+1:]...)
+		} else {
+			i++
+		}
+	}
+}

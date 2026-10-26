@@ -21,11 +21,12 @@ import (
 )
 
 type output struct {
-	writer  io.Writer
-	tty     bool
-	options options
-	pretty  string
-	format  map[string]string
+	writer       io.Writer
+	tty          bool
+	options      options
+	pretty       string
+	format       map[string]string
+	previousBody bool
 }
 
 func newOutput(w io.Writer, tty bool, o options) (*output, error) {
@@ -76,6 +77,50 @@ func (o *output) selection() string {
 		return "hb"
 	}
 	return "b"
+}
+func (o *output) separate(selected bool) error {
+	if o.previousBody && selected && !o.tty {
+		_, err := io.WriteString(o.writer, "\n\n")
+		return err
+	}
+	return nil
+}
+func (o *output) request(r *request, retry bool) error {
+	selection := o.selection()
+	if !retry {
+		if err := o.separate(strings.ContainsAny(selection, "HB")); err != nil {
+			return err
+		}
+		if err := o.writeRequest(r, selection); err != nil {
+			return err
+		}
+		o.previousBody = strings.Contains(selection, "B")
+	}
+	if r.streamedBody && strings.Contains(selection, "B") && r.Body != nil {
+		r.Body = &displayedUpload{ReadCloser: r.Body, output: o, contentType: r.Header.Get("Content-Type"), headers: strings.Contains(selection, "H"), lines: r.chunkLines}
+	}
+	return nil
+}
+func (o *output) sent(r *request) error {
+	if r.streamedBody && strings.Contains(o.selection(), "B") && o.tty {
+		_, err := io.WriteString(o.writer, "\n\n")
+		return err
+	}
+	return nil
+}
+func (o *output) response(r *http.Response, headers []header, start time.Time) error {
+	selection := o.selection()
+	if o.options.has("download") {
+		selection = strings.ReplaceAll(selection, "b", "")
+	}
+	if err := o.separate(strings.ContainsAny(selection, "hbm")); err != nil {
+		return err
+	}
+	if err := o.writeResponse(r, headers, selection, start); err != nil {
+		return err
+	}
+	o.previousBody = strings.Contains(selection, "b")
+	return nil
 }
 func (o *output) formatting() bool { return o.pretty == "all" || o.pretty == "format" }
 func (o *output) coloring() bool   { return o.pretty == "all" || o.pretty == "colors" }

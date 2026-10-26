@@ -7,13 +7,13 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"runtime"
 	"runtime/debug"
-	"strings"
 	"syscall"
-	"time"
 
 	"golang.org/x/term"
 )
@@ -120,65 +120,19 @@ func run(program string, args []string, stdin io.Reader, stdout, stderr io.Write
 		stdin, stop = watchStdin(stdin, stderr)
 		defer stop()
 	}
-	req, cleanup, err := buildRequest(o, program, stdin, stdinTTY)
+	ex, err := prepare(o, program, stdin, stdinTTY)
 	if err != nil {
 		return 1, err
 	}
-	defer cleanup()
-	if req.Body != nil {
-		defer req.Body.Close()
-	}
-	s := &session{cookies: []storedCookie{}}
-	if name := o.value("session"); name != "" || o.has("session-read-only") {
-		if name == "" {
-			name = o.value("session-read-only")
-		}
-		s, err = loadSession(req.Host, name)
-		if err != nil {
-			return 1, err
-		}
-		s.apply(req, o)
-	}
-	auth, err := authCredentials(o, req)
-	if err != nil {
-		return 1, err
-	}
-	if s.path != "" {
-		if auth.kind == "" {
-			auth = s.credentials()
-		} else {
-			s.auth = map[string]any{"type": auth.kind, "raw_auth": auth.raw}
-		}
-		if err = s.updateHeaders(req, o); err != nil {
-			return 1, err
-		}
-	}
-	if auth.kind == "" && !o.has("ignore-netrc") {
-		if user, password, ok := netrcAuth(req.URL.Hostname()); ok {
-			auth = authentication{kind: "basic", username: user, password: password, latin1: true}
-		}
-	}
-	if err = applyAuth(req, auth); err != nil {
-		return 1, err
-	}
-	if auth.kind != "" && auth.kind != "basic" && auth.kind != "digest" && auth.kind != "bearer" {
-		return 1, fmt.Errorf("unsupported session authentication type: %s", auth.kind)
-	}
-	if cookie := s.cookiesFor(req.URL); cookie != "" && req.Header.Get("Cookie") == "" {
-		req.setHeader("Cookie", cookie)
-		req.moveHeaderBefore("Cookie", "User-Agent")
-	}
+	defer ex.close()
 	checkUpdateWarnings(stderr, program, stdoutTTY && o.has("quiet"))
-	transport, err := newTransport(o)
-	if err != nil {
+	if err = ex.open(); err != nil {
 		return 1, err
 	}
-	defer transport.tls.close()
-	defer transport.Close()
 	if o.has("offline") {
-		err = out.writeRequest(req, out.selection())
-		if err == nil && s.path != "" && (!o.has("session-read-only") || !s.exists) {
-			err = s.save()
+		err = out.writeRequest(ex.request, out.selection())
+		if err == nil {
+			err = ex.saveSession()
 		}
 		if err != nil {
 			return 1, err
@@ -187,7 +141,7 @@ func run(program string, args []string, stdin io.Reader, stdout, stderr io.Write
 	}
 	var resume int64
 	if o.has("download") {
-		resume, err = prepareDownload(req, o)
+		resume, err = prepareDownload(ex.request, o)
 		if err != nil {
 			return 1, err
 		}
@@ -200,13 +154,20 @@ func run(program string, args []string, stdin io.Reader, stdout, stderr io.Write
 		}
 	})
 	defer stopInput()
-	code, err = exchange(ctx, transport, req, s, auth, out, stdout, stderr, stdoutTTY, resume)
+	initialURL := ex.request.URL
+	response, err := ex.do(ctx, out)
+	if err == nil {
+		code, err = finish(ex, response, initialURL, out, stdout, stderr, stdoutTTY, resume)
+	} else if limit := redirectLimitError(0); errors.As(err, &limit) {
+		code = 6
+	} else {
+		code = 1
+	}
 	if ctx.Err() != nil {
 		return 130, nil
 	}
-	if err == nil && s.path != "" && (!o.has("session-read-only") || !s.exists) {
-		err = s.save()
-		if err != nil {
+	if err == nil {
+		if err = ex.saveSession(); err != nil {
 			code = 1
 		}
 	}
@@ -218,182 +179,33 @@ func run(program string, args []string, stdin io.Reader, stdout, stderr io.Write
 	}
 	return code, err
 }
-func exchange(ctx context.Context, t *transport, r *request, s *session, auth authentication, out *output, stdout, stderr io.Writer, stdoutTTY bool, resume int64) (int, error) {
-	o := out.options
-	follow := o.has("follow") || o.has("download")
-	history := o.has("all") || o.has("verbose")
-	redirects := 0
-	digestTried := false
-	initialURL := r.URL
-	selection := out.selection()
-	previousBody := false
-	separate := func(selected bool) error {
-		if previousBody && selected && !out.tty {
-			_, err := io.WriteString(out.writer, "\n\n")
-			return err
-		}
-		return nil
-	}
-	for {
-		if !digestTried {
-			if err := separate(strings.ContainsAny(selection, "HB")); err != nil {
-				return 1, err
-			}
-			if err := out.writeRequest(r, selection); err != nil {
-				return 1, err
-			}
-			previousBody = strings.Contains(selection, "B")
-		}
-		if r.streamedBody && strings.Contains(selection, "B") && r.Body != nil {
-			r.Body = &displayedUpload{ReadCloser: r.Body, output: out, contentType: r.Header.Get("Content-Type"), headers: strings.Contains(selection, "H"), lines: r.chunkLines}
-		}
-		start := time.Now()
-		response, headers, err := t.send(ctx, r)
-		if err != nil {
-			return 1, err
-		}
-		if r.streamedBody && strings.Contains(selection, "B") && out.tty {
-			if _, err = io.WriteString(out.writer, "\n\n"); err != nil {
-				t.Close()
-				response.Body.Close()
-				return 1, err
-			}
-		}
-		s.receiveCookies(response.Cookies(), r.URL)
-		redirect := response.Header.Get("Location") != "" && (response.StatusCode == 301 || response.StatusCode == 302 || response.StatusCode == 303 || response.StatusCode == 307 || response.StatusCode == 308)
-		challenge, offered := digestChallenge(response.Header.Values("WWW-Authenticate"))
-		digest := auth.kind == "digest" && !digestTried && response.StatusCode == 401 && offered
-		if redirect {
-			redirects++
-			if max := o.integer("max-redirects"); max != 0 && redirects == max {
-				t.Close()
-				response.Body.Close()
-				return 6, fmt.Errorf("too many redirects (--max-redirects=%d)", max)
-			}
-		}
-		redirect = follow && redirect
-		if !digest && (history || !redirect) {
-			responseSelection := selection
-			if o.has("download") {
-				responseSelection = strings.ReplaceAll(responseSelection, "b", "")
-			}
-			if err = separate(strings.ContainsAny(responseSelection, "hbm")); err == nil {
-				err = out.writeResponse(response, headers, responseSelection, start)
-			}
-			if err != nil {
-				t.Close()
-				response.Body.Close()
-				return 1, err
-			}
-			previousBody = strings.Contains(responseSelection, "b")
-		}
-		if !redirect && !digest {
-			code := 0
-			if o.has("check-status") || o.has("download") {
-				switch {
-				case response.StatusCode >= 500:
-					code = 5
-				case response.StatusCode >= 400:
-					code = 4
-				case response.StatusCode >= 300 && !follow:
-					code = 3
-				}
-			}
-			if code == 0 && o.has("download") {
 
-				if e := download(response, initialURL, o, stdout, stderr, stdoutTTY, out.tty, resume); e != nil {
-					t.Close()
-					response.Body.Close()
-					return 1, e
-				}
-			}
-			t.Close()
-			response.Body.Close()
-			if code != 0 && !stdoutTTY && o.count("quiet") < 2 {
-				fmt.Fprintf(stderr, "\nhttp: warning: HTTP %s\n", response.Status)
-			}
-			return code, nil
+// finish handles the last response: its status for --check-status, and
+// its body for --download.
+func finish(ex *exchange, response *http.Response, initialURL *url.URL, out *output, stdout, stderr io.Writer, stdoutTTY bool, resume int64) (int, error) {
+	o := ex.options
+	code := 0
+	if o.has("check-status") || o.has("download") {
+		switch {
+		case response.StatusCode >= 500:
+			code = 5
+		case response.StatusCode >= 400:
+			code = 4
+		case response.StatusCode >= 300 && !o.has("follow") && !o.has("download"):
+			code = 3
 		}
-		_, err = io.Copy(io.Discard, response.Body)
-		response.Body.Close()
-		if err != nil {
+	}
+	if code == 0 && o.has("download") {
+		if err := download(response, initialURL, o, stdout, stderr, stdoutTTY, out.tty, resume); err != nil {
+			ex.close()
+			response.Body.Close()
 			return 1, err
 		}
-		if response.Close {
-			t.Close()
-		}
-		if digest {
-			value, e := digestAuthorization(challenge, r.Method, r.URL.RequestURI(), auth)
-			if e != nil {
-				return 1, e
-			}
-			r.setHeader("Authorization", value)
-			digestTried = true
-		} else {
-			digestTried = false
-			next, e := r.URL.Parse(response.Header.Get("Location"))
-			if e != nil {
-				return 1, e
-			}
-			if next.Scheme != "http" && next.Scheme != "https" {
-				return 1, fmt.Errorf("unsupported redirect scheme: %s", next.Scheme)
-			}
-			stripAuth := address(r.URL) != address(next) || r.URL.Scheme != next.Scheme
-			if r.URL.Hostname() == next.Hostname() && r.URL.Scheme == "http" && next.Scheme == "https" && (r.URL.Port() == "" || r.URL.Port() == "80") && (next.Port() == "" || next.Port() == "443") {
-				stripAuth = false
-			}
-			if stripAuth {
-				r.deleteHeader("Authorization")
-				auth.kind = ""
-			}
-			if user, password, ok := netrcAuth(next.Hostname()); ok {
-				auth = authentication{kind: "basic", username: user, password: password, latin1: true}
-				if err := applyAuth(r, auth); err != nil {
-					return 1, err
-				}
-			}
-			status := response.StatusCode
-			if status == 303 && r.Method != "HEAD" || status == 302 && r.Method != "HEAD" || status == 301 && r.Method == "POST" {
-				r.Method = "GET"
-			}
-			if status != 307 && status != 308 {
-				r.Body = nil
-				r.streamedBody = false
-				r.liveInput = false
-				r.GetBody = func() (io.ReadCloser, error) { return io.NopCloser(strings.NewReader("")), nil }
-				r.ContentLength = 0
-				r.TransferEncoding = nil
-				for _, name := range []string{"Content-Length", "Content-Type", "Transfer-Encoding"} {
-					r.deleteHeader(name)
-				}
-			}
-			r.URL = next
-			if r.defaultHost {
-				r.setHeader("Host", next.Host)
-			}
-		}
-		if !digest {
-			r.deleteHeader("Cookie")
-		}
-		if cookie := s.cookiesFor(r.URL); cookie != "" && r.Header.Get("Cookie") == "" {
-			r.setHeader("Cookie", cookie)
-			r.moveHeaderBefore("Cookie", "User-Agent")
-		}
-		if r.ContentLength != 0 || len(r.TransferEncoding) > 0 {
-			r.Body, err = r.GetBody()
-			if err != nil {
-				return 1, err
-			}
-		}
 	}
-}
-func (r *request) deleteHeader(name string) {
-	r.Header.Del(name)
-	for i := 0; i < len(r.headers); {
-		if strings.EqualFold(r.headers[i].Name, name) {
-			r.headers = append(r.headers[:i], r.headers[i+1:]...)
-		} else {
-			i++
-		}
+	ex.close()
+	response.Body.Close()
+	if code != 0 && !stdoutTTY && o.count("quiet") < 2 {
+		fmt.Fprintf(stderr, "\nhttp: warning: HTTP %s\n", response.Status)
 	}
+	return code, nil
 }

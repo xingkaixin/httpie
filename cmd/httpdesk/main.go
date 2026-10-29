@@ -64,6 +64,7 @@ type app struct {
 	inflight  map[string]context.CancelFunc
 	url       ui.Handle
 	synced    struct{ id, url string }
+	curl      string
 
 	reqTab, resTab int
 	bulk           bool
@@ -267,6 +268,10 @@ func (a *app) header(c *ui.Context, col *collection, r *request) {
 
 func (a *app) urlBar(c *ui.Context, r *request) {
 	t := c.Theme()
+	if a.curl != "" {
+		a.importCurl(c, r, a.curl)
+		a.curl = ""
+	}
 	_, sending := a.inflight[r.ID]
 	ui.Row(c).Margin(0, 16, 12, 16).Padding(4, 4, 4, 6).Gap(4).Radius(10).Border(1, t.Border).Background(t.Surface).AlignItems(ui.Center).Children(func() {
 		m := ui.ButtonBase(c).Label("请求方法").Gap(4).Padding(6, 8).Radius(6)
@@ -285,7 +290,7 @@ func (a *app) urlBar(c *ui.Context, r *request) {
 			}
 		})
 		templatefield.Input(c.Key("url-"+r.ID), &r.URL, a.env()).Bind(&a.url).Placeholder("httpbin.org/get，或 :3000/api").Label("URL").
-			Font("monospace").Grow(1).Padding(6, 4).OnSubmit(a.send)
+			Font("monospace").Grow(1).Padding(6, 4).OnSubmit(a.send).OnPaste(a.pasteCurl)
 		if sending {
 			ui.Button(c, "取消").OnClick(func() { a.inflight[r.ID]() })
 		} else {
@@ -582,6 +587,35 @@ func (a *app) duplicate(col *collection, r *request) {
 	i := slices.Index(col.Requests, r)
 	col.Requests = slices.Insert(col.Requests, i+1, &cp)
 	a.ws.Selected = cp.ID
+}
+
+// pasteCurl takes a curl command pasted into the URL for the next build to
+// import: the input would put back its own text over a URL set now,
+// between frames.
+func (a *app) pasteCurl(text string) bool {
+	text = strings.TrimSpace(text)
+	if !strings.HasPrefix(text, "curl ") {
+		return false
+	}
+	a.curl = text
+	return true
+}
+
+// importCurl fills r with the request of a curl command, keeping its name.
+func (a *app) importCurl(c *ui.Context, r *request, cmd string) {
+	imported, err := parseCurl(cmd)
+	if err != nil {
+		c.Toast("无法导入 cURL：" + err.Error())
+		return
+	}
+	old := *r
+	imported.ID, imported.Name = r.ID, r.Name
+	*r = *imported
+	c.ToastAction("已从 cURL 导入", "撤销", func() {
+		*r = old
+		// The URL comes back with its Params, not as an edit to parse.
+		a.synced.id, a.synced.url = r.ID, r.URL
+	})
 }
 
 func (a *app) deleteRequest(c *ui.Context, col *collection, r *request) {

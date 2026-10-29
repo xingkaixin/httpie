@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/xingkaixin/mygo-native-ui/ui/kvtable"
+
+	"httpie/internal/core"
 )
 
 type request struct {
@@ -50,8 +52,10 @@ type workspace struct {
 	Collections  []*collection  `json:"collections"`
 	Environments []*environment `json:"environments,omitempty"`
 	Env          string         `json:"env,omitempty"`
-	Selected     string         `json:"selected"`
-	Split        float32        `json:"split"`
+	// Cookies is the jar all requests share, whatever the environment.
+	Cookies  []core.Cookie `json:"cookies,omitempty"`
+	Selected string        `json:"selected"`
+	Split    float32       `json:"split"`
 }
 
 const (

@@ -38,6 +38,7 @@ type response struct {
 	Duration  time.Duration
 	Redirects []hop
 	Sent      string
+	Cookies   []core.Cookie
 	Err       string
 	view      *editor.State
 	sentView  *editor.State
@@ -162,8 +163,10 @@ func (rec *recorder) Response(r *http.Response, headers []core.Header, _ time.Ti
 	return nil
 }
 
-func send(ctx context.Context, args []string) *response {
-	res, err := exchange(ctx, args)
+// send sends the request of args with the cookies of jar; the response has
+// the jar as the exchange left it.
+func send(ctx context.Context, args []string, jar []core.Cookie) *response {
+	res, err := exchange(ctx, args, jar)
 	if ctx.Err() != nil {
 		return &response{Err: "已取消"}
 	}
@@ -173,7 +176,7 @@ func send(ctx context.Context, args []string) *response {
 	return res
 }
 
-func exchange(ctx context.Context, args []string) (*response, error) {
+func exchange(ctx context.Context, args []string, jar []core.Cookie) (*response, error) {
 	o, err := core.ParseOptions(append(slices.Clone(sendFlags), args...))
 	if err != nil {
 		return nil, err
@@ -192,6 +195,7 @@ func exchange(ctx context.Context, args []string) (*response, error) {
 		return nil, err
 	}
 	defer ex.Close()
+	ex.SetCookies(jar)
 	if err = ex.Open(); err != nil {
 		return nil, err
 	}
@@ -219,6 +223,7 @@ func exchange(ctx context.Context, args []string) (*response, error) {
 		Duration:  time.Since(start),
 		Redirects: rec.hops[:len(rec.hops)-1],
 		Sent:      strings.Join(rec.sent, "\n\n"),
+		Cookies:   ex.Cookies(),
 	}
 	if decodeErr != nil {
 		res.Body = decodeErr.Error()

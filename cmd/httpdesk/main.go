@@ -121,6 +121,20 @@ func (a *app) varInput(c *ui.Context, text *string) ui.Element {
 	return in
 }
 
+// headerMenu is a drop-down of the header showing text, whose menu the
+// caller adds.
+func headerMenu(c *ui.Context, label, text string) ui.Element {
+	t := c.Theme()
+	b := ui.ButtonBase(c).Label(label).Gap(6).Padding(6, 10).Radius(6).Border(1, t.Border)
+	if b.Hovered() {
+		b.Background(t.SurfaceHover)
+	}
+	return b.Children(func() {
+		ui.Text(c, text).FontSize(13)
+		ui.Icon(c, iconUpDown).FontSize(10).TextColor(t.TextMuted)
+	})
+}
+
 // menuSelect is a compact drop-down, as HTTPie's "JSON ⇕", showing a menu of the system's.
 func menuSelect(c *ui.Context, label string, value *string, options []string) {
 	t := c.Theme()
@@ -287,10 +301,29 @@ func (a *app) header(c *ui.Context, col *collection, r *request) {
 			}
 		})
 		ui.Spacer(c)
+		if len(a.ws.Cookies) > 0 {
+			a.cookieMenu(c)
+		}
 		a.envMenu(c, &a.ws.Env, true)
 		if ui.Button(c, "复制命令").Tooltip("复制为 http 命令").Clicked() {
 			c.WriteClipboard(command(requestArgs(a.env().resolve(col.effective(r)))))
 			c.Toast("已复制 http 命令")
+		}
+	})
+}
+
+// cookieMenu lists the cookies the requests send, as the responses set
+// them, and clears them.
+func (a *app) cookieMenu(c *ui.Context) {
+	headerMenu(c, "Cookie", fmt.Sprintf("Cookie %d", len(a.ws.Cookies))).Menu(func(m *ui.Menu) {
+		for _, ck := range a.ws.Cookies {
+			// core keeps a dotless host's cookies, as localhost's, under
+			// host.local, as Python's cookiejar does.
+			m.Item(ck.Name + " · " + strings.TrimSuffix(*ck.Domain, ".local")).Disabled(true)
+		}
+		m.Separator()
+		if m.Item("清空 Cookie").Chosen() {
+			a.ws.Cookies = nil
 		}
 	})
 }
@@ -576,15 +609,18 @@ func (a *app) send() {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	a.inflight[r.ID] = cancel
-	id, args := r.ID, requestArgs(a.env().resolve(col.effective(r)))
+	id, args, jar := r.ID, requestArgs(a.env().resolve(col.effective(r))), a.ws.Cookies
 	go func() {
-		res := send(ctx, args)
+		res := send(ctx, args, jar)
 		cancel()
 		res.view = textView(res.Body, "响应 Body", res.JSON)
 		res.sentView = textView(res.Sent, "实际发出的请求", false)
 		a.win.Update(func() {
 			delete(a.inflight, id)
 			a.responses[id] = res
+			if res.Err == "" {
+				a.ws.Cookies = res.Cookies
+			}
 		})
 	}()
 }

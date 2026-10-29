@@ -115,7 +115,6 @@ func (a *app) ranges(c *ui.Context) func(string) []ui.TextRange {
 // envMenu chooses an environment into *id: the active one, with none among
 // them and the dialog editing them, or else the one the dialog edits.
 func (a *app) envMenu(c *ui.Context, id *string, active bool) {
-	t := c.Theme()
 	env := a.environment(*id)
 	name := "无环境"
 	if env != nil {
@@ -123,15 +122,7 @@ func (a *app) envMenu(c *ui.Context, id *string, active bool) {
 	} else if !active {
 		name = "选择环境"
 	}
-	b := ui.ButtonBase(c).Label("环境").Gap(6).Padding(6, 10).Radius(6).Border(1, t.Border)
-	if b.Hovered() {
-		b.Background(t.SurfaceHover)
-	}
-	b.Children(func() {
-		ui.Text(c, name).FontSize(13)
-		ui.Icon(c, iconUpDown).FontSize(10).TextColor(t.TextMuted)
-	})
-	b.Menu(func(m *ui.Menu) {
+	headerMenu(c, "环境", name).Menu(func(m *ui.Menu) {
 		if active && m.Item("无环境").Checked(env == nil).Chosen() {
 			*id = ""
 		}

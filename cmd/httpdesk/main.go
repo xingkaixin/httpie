@@ -157,6 +157,12 @@ func (a *app) view(c *ui.Context) {
 	if c.Shortcut(ui.Cmd, ui.KeyEnter) {
 		a.send()
 	}
+	if c.Shortcut(ui.Cmd, ui.KeyN) {
+		a.newRequest(nil)
+	}
+	if _, r := a.ws.find(a.ws.Selected); r != nil && c.Shortcut(ui.Cmd, ui.KeyL) {
+		a.url.Focus()
+	}
 
 	c.Root().Background(ui.Transparent)
 	ui.Row(c).Fill().AlignItems(ui.Stretch).Children(func() {
@@ -185,7 +191,7 @@ func (a *app) sidebar(c *ui.Context) {
 	ui.Column(c).Width(250).Padding(max(c.TitleBar().Height, 12), 0, 0, 0).Children(func() {
 		ui.Row(c).Padding(0, 10, 4, 18).Gap(2).AlignItems(ui.Center).DragWindow().Children(func() {
 			ui.Text(c, "Collections").FontSize(12).FontWeight(600).TextColor(t.TextMuted).Grow(1)
-			iconButton(c, iconPlus, "新建请求").OnClick(func() { a.newRequest(nil) })
+			iconButton(c, iconPlus, "新建请求 ⌘N").OnClick(func() { a.newRequest(nil) })
 			iconButton(c, iconFolderPlus, "新建集合").OnClick(a.newCollection)
 		})
 		ui.Sidebar(c, &a.ws.Selected, func() {

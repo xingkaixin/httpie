@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"regexp"
 	"slices"
 
@@ -72,12 +73,17 @@ func (e *environment) resolve(r *request) *request {
 	return &cp
 }
 
-func (a *app) env() *environment {
-	i := slices.IndexFunc(a.ws.Environments, func(e *environment) bool { return e.ID == a.ws.Env })
+func (a *app) environment(id string) *environment {
+	i := slices.IndexFunc(a.ws.Environments, func(e *environment) bool { return e.ID == id })
 	if i < 0 {
 		return nil
 	}
 	return a.ws.Environments[i]
+}
+
+// env returns the active environment, which requests use.
+func (a *app) env() *environment {
+	return a.environment(a.ws.Env)
 }
 
 func (a *app) ranges(c *ui.Context) func(string) []ui.TextRange {
@@ -85,14 +91,16 @@ func (a *app) ranges(c *ui.Context) func(string) []ui.TextRange {
 	return func(v string) []ui.TextRange { return templatefield.Ranges(v, env, t) }
 }
 
-// envMenu chooses the environment, and opens the dialog editing them
-// unless it is in it.
-func (a *app) envMenu(c *ui.Context, manage bool) {
+// envMenu chooses an environment into *id: the active one, with none among
+// them and the dialog editing them, or else the one the dialog edits.
+func (a *app) envMenu(c *ui.Context, id *string, active bool) {
 	t := c.Theme()
-	env := a.env()
+	env := a.environment(*id)
 	name := "无环境"
 	if env != nil {
 		name = env.Name
+	} else if !active {
+		name = "选择环境"
 	}
 	b := ui.ButtonBase(c).Label("环境").Gap(6).Padding(6, 10).Radius(6).Border(1, t.Border)
 	if b.Hovered() {
@@ -103,18 +111,18 @@ func (a *app) envMenu(c *ui.Context, manage bool) {
 		ui.Icon(c, iconUpDown).FontSize(10).TextColor(t.TextMuted)
 	})
 	b.Menu(func(m *ui.Menu) {
-		if m.Item("无环境").Checked(env == nil).Chosen() {
-			a.ws.Env = ""
+		if active && m.Item("无环境").Checked(env == nil).Chosen() {
+			*id = ""
 		}
 		for _, e := range a.ws.Environments {
 			if m.Item(e.Name).Checked(e == env).Chosen() {
-				a.ws.Env = e.ID
+				*id = e.ID
 			}
 		}
-		if manage {
+		if active {
 			m.Separator()
 			if m.Item("管理环境…").Chosen() {
-				a.envOpen = true
+				a.envOpen, a.editing = true, a.ws.Env
 			}
 		}
 	})
@@ -123,23 +131,22 @@ func (a *app) envMenu(c *ui.Context, manage bool) {
 func (a *app) newEnvironment() {
 	e := &environment{ID: newID(), Name: "新环境"}
 	a.ws.Environments = append(a.ws.Environments, e)
-	a.ws.Env = e.ID
+	a.editing = e.ID
 }
 
 func (a *app) envDialog(c *ui.Context) {
+	env := a.environment(a.editing)
 	ui.Modal(c, &a.envOpen, func() {
-		env := a.env()
 		ui.Column(c).Width(640).Gap(12).Children(func() {
 			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 				ui.Text(c, "环境").FontSize(15).Bold()
 				ui.Spacer(c)
-				a.envMenu(c, false)
+				if len(a.ws.Environments) > 0 {
+					a.envMenu(c, &a.editing, false)
+				}
 				ui.Button(c, "新建").OnClick(a.newEnvironment)
 				if env != nil {
-					ui.Button(c, "删除").OnClick(func() {
-						a.ws.Environments = slices.DeleteFunc(a.ws.Environments, func(e *environment) bool { return e == env })
-						a.ws.Env = ""
-					})
+					ui.Button(c, "删除…").OnClick(func() { a.envDeleteOpen = true })
 				}
 			})
 			if env == nil {
@@ -155,4 +162,12 @@ func (a *app) envDialog(c *ui.Context) {
 			})
 		})
 	})
+	if env != nil && ui.AlertDialog(c, &a.envDeleteOpen, fmt.Sprintf("删除环境“%s”？", env.Name),
+		"其中的变量会一起删除，无法撤销。", "取消", "删除") == 1 {
+		a.ws.Environments = slices.DeleteFunc(a.ws.Environments, func(e *environment) bool { return e == env })
+		if a.ws.Env == env.ID {
+			a.ws.Env = ""
+		}
+		a.editing = ""
+	}
 }

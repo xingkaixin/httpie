@@ -72,7 +72,9 @@ type app struct {
 	renameTo   string
 	deleting   *collection
 	deleteOpen bool
-	envOpen    bool
+
+	envOpen, envDeleteOpen bool
+	editing                string
 }
 
 func (a *app) saveIfChanged() {
@@ -253,7 +255,7 @@ func (a *app) header(c *ui.Context, col *collection, r *request) {
 			}
 		})
 		ui.Spacer(c)
-		a.envMenu(c, true)
+		a.envMenu(c, &a.ws.Env, true)
 		if ui.Button(c, "复制命令").Tooltip("复制为 http 命令").Clicked() {
 			c.WriteClipboard(command(requestArgs(a.env().resolve(r))))
 			c.Toast("已复制 http 命令")

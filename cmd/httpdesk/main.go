@@ -362,7 +362,7 @@ func (a *app) urlBar(c *ui.Context, r *request) {
 			Font("monospace").Grow(1).Padding(6, 4).OnSubmit(a.send).OnPaste(a.pasteCurl)
 		if sending {
 			if ui.Button(c, "取消").Clicked() {
-				a.inflight[r.ID]()
+				a.cancel(r)
 				c.Toast("已取消")
 			}
 		} else {
@@ -646,6 +646,12 @@ func textView(text, label string, isJSON bool) *editor.State {
 	}
 }
 
+func (a *app) cancel(r *request) {
+	if cancel, ok := a.inflight[r.ID]; ok {
+		cancel()
+	}
+}
+
 func (a *app) send() {
 	col, r := a.ws.find(a.ws.Selected)
 	if r == nil {
@@ -823,6 +829,7 @@ func (a *app) importCurl(c *ui.Context, r *request, cmd string) {
 }
 
 func (a *app) deleteRequest(c *ui.Context, col *collection, r *request) {
+	a.cancel(r)
 	i := slices.Index(col.Requests, r)
 	col.Requests = slices.Delete(col.Requests, i, i+1)
 	if a.ws.Selected == r.ID {
@@ -866,6 +873,9 @@ func (a *app) dialogs(c *ui.Context) {
 	})
 	if a.deleting != nil && ui.AlertDialog(c, &a.deleteOpen, fmt.Sprintf("删除集合“%s”？", a.deleting.Name),
 		fmt.Sprintf("其中的 %d 个请求会一起删除，无法撤销。", len(a.deleting.Requests)), "取消", "删除") == 1 {
+		for _, r := range a.deleting.Requests {
+			a.cancel(r)
+		}
 		a.ws.Collections = slices.DeleteFunc(a.ws.Collections, func(col *collection) bool { return col == a.deleting })
 		if col, _ := a.ws.find(a.ws.Selected); col == nil {
 			a.ws.Selected = ""

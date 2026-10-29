@@ -23,20 +23,26 @@ type request struct {
 	BodyType string         `json:"bodyType"`
 	Body     string         `json:"body,omitempty"`
 	Form     []kvtable.Pair `json:"form,omitempty"`
-	AuthType string         `json:"authType"`
-	User     string         `json:"user,omitempty"`
-	Password string         `json:"password,omitempty"`
-	Token    string         `json:"token,omitempty"`
-	BodyFile string         `json:"bodyFile,omitempty"`
-	Follow   bool           `json:"follow,omitempty"`
-	Insecure bool           `json:"insecure,omitempty"`
-	Timeout  float64        `json:"timeout,omitempty"`
+	auth
+	BodyFile string  `json:"bodyFile,omitempty"`
+	Follow   bool    `json:"follow,omitempty"`
+	Insecure bool    `json:"insecure,omitempty"`
+	Timeout  float64 `json:"timeout,omitempty"`
+}
+
+type auth struct {
+	AuthType string `json:"authType"`
+	User     string `json:"user,omitempty"`
+	Password string `json:"password,omitempty"`
+	Token    string `json:"token,omitempty"`
 }
 
 type collection struct {
-	ID       string     `json:"id"`
-	Name     string     `json:"name"`
-	Open     bool       `json:"open"`
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Open bool   `json:"open"`
+	// Auth is that of the requests inheriting it.
+	Auth     auth       `json:"auth"`
 	Requests []*request `json:"requests"`
 }
 
@@ -59,17 +65,19 @@ const (
 	kindText = "Text"
 	kindFile = "File"
 
-	authNone   = "None"
-	authBasic  = "Basic"
-	authDigest = "Digest"
-	authBearer = "Bearer"
+	authInherit = "Inherit"
+	authNone    = "None"
+	authBasic   = "Basic"
+	authDigest  = "Digest"
+	authBearer  = "Bearer"
 )
 
 var (
-	methods   = []string{"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"}
-	bodyTypes = []string{bodyNone, bodyJSON, bodyText, bodyForm, bodyMultipart, bodyFile}
-	authTypes = []string{authNone, authBasic, authDigest, authBearer}
-	idSeq     atomic.Int64
+	methods          = []string{"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"}
+	bodyTypes        = []string{bodyNone, bodyJSON, bodyText, bodyForm, bodyMultipart, bodyFile}
+	authTypes        = []string{authNone, authBasic, authDigest, authBearer}
+	requestAuthTypes = append([]string{authInherit}, authTypes...)
+	idSeq            atomic.Int64
 )
 
 func newID() string {
@@ -77,7 +85,7 @@ func newID() string {
 }
 
 func newRequest(name, method, url string) *request {
-	return &request{ID: newID(), Name: name, Method: method, URL: url, BodyType: bodyNone, AuthType: authNone, Follow: true}
+	return &request{ID: newID(), Name: name, Method: method, URL: url, BodyType: bodyNone, auth: auth{AuthType: authInherit}, Follow: true}
 }
 
 func sampleWorkspace() *workspace {
@@ -88,7 +96,7 @@ func sampleWorkspace() *workspace {
 	get.Params = parse(get.URL, nil)
 	repo := newRequest("GitHub repo", "GET", "https://api.github.com/repos/egoist/mygo")
 	repo.Headers = []kvtable.Pair{{On: true, Key: "Accept", Value: "application/vnd.github+json"}}
-	col := &collection{ID: newID(), Name: "示例", Open: true, Requests: []*request{get, post, repo}}
+	col := &collection{ID: newID(), Name: "示例", Open: true, Auth: auth{AuthType: authNone}, Requests: []*request{get, post, repo}}
 	return &workspace{Collections: []*collection{col}, Selected: get.ID, Split: 460}
 }
 
@@ -104,9 +112,13 @@ func loadWorkspace(path string) (*workspace, error) {
 	if err := json.Unmarshal(data, ws); err != nil {
 		return nil, err
 	}
-	// Workspaces saved before Params followed the URL's query sent both,
-	// the query first.
 	for _, col := range ws.Collections {
+		// Collections saved before they had auth have none.
+		if col.Auth.AuthType == "" {
+			col.Auth.AuthType = authNone
+		}
+		// Workspaces saved before Params followed the URL's query sent
+		// both, the query first.
 		for _, r := range col.Requests {
 			if !slices.Equal(enabled(parse(r.URL, nil)), enabled(r.Params)) {
 				r.Params = append(parse(r.URL, nil), r.Params...)
@@ -126,6 +138,16 @@ func (ws *workspace) find(id string) (*collection, *request) {
 		}
 	}
 	return nil, nil
+}
+
+// effective returns r as sent, with col's auth where r inherits it.
+func (col *collection) effective(r *request) *request {
+	if r.AuthType != authInherit {
+		return r
+	}
+	cp := *r
+	cp.auth = col.Auth
+	return &cp
 }
 
 func enabled(rows []kvtable.Pair) []kvtable.Pair {

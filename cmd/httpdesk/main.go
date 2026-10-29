@@ -75,6 +75,8 @@ type app struct {
 	renameTo   string
 	deleting   *collection
 	deleteOpen bool
+	authOf     *collection
+	authOpen   bool
 
 	envOpen, envDeleteOpen bool
 	editing                string
@@ -103,6 +105,19 @@ func iconButton(c *ui.Context, svg *ui.SVG, label string) ui.Element {
 		b.Background(t.SurfaceHover).TextColor(t.Text)
 	}
 	return b.Children(func() { ui.Icon(c, svg).FontSize(14) })
+}
+
+// varInput is a TextInput completing {{variables}} as the URL does.
+func (a *app) varInput(c *ui.Context, text *string) ui.Element {
+	t := c.Theme()
+	in := templatefield.Input(c, text, a.env()).Padding(t.Space(1.5), t.Space(2.5)).Radius(t.Radius).Background(t.Surface).Border(1, t.Border)
+	switch {
+	case in.Focused():
+		in.BorderColor(t.Accent)
+	case in.Hovered():
+		in.BorderColor(t.Border.Mix(t.Text, 0.25))
+	}
+	return in
 }
 
 // menuSelect is a compact drop-down, as HTTPie's "JSON ⇕", showing a menu of the system's.
@@ -183,7 +198,7 @@ func (a *app) view(c *ui.Context) {
 			}
 			a.header(c, col, r)
 			a.urlBar(c, r)
-			ui.Split(c, &a.ws.Split, func() { a.requestPane(c, r) }, func() { a.responsePane(c, r) }).
+			ui.Split(c, &a.ws.Split, func() { a.requestPane(c, col, r) }, func() { a.responsePane(c, r) }).
 				Grow(1).BorderWidth(1, 0, 0, 0).BorderColor(t.Border)
 		})
 	})
@@ -226,6 +241,9 @@ func (a *app) sidebar(c *ui.Context) {
 					if m.Item("重命名…").Chosen() {
 						action = func() { a.renaming, a.renameTo, a.renameOpen = col, col.Name, true }
 					}
+					if m.Item("集合认证…").Chosen() {
+						action = func() { a.authOf, a.authOpen = col, true }
+					}
 					m.Separator()
 					if m.Item("删除集合…").Disabled(len(a.ws.Collections) == 1).Chosen() {
 						action = func() { a.deleting, a.deleteOpen = col, true }
@@ -260,7 +278,7 @@ func (a *app) header(c *ui.Context, col *collection, r *request) {
 		ui.Spacer(c)
 		a.envMenu(c, &a.ws.Env, true)
 		if ui.Button(c, "复制命令").Tooltip("复制为 http 命令").Clicked() {
-			c.WriteClipboard(command(requestArgs(a.env().resolve(r))))
+			c.WriteClipboard(command(requestArgs(a.env().resolve(col.effective(r)))))
 			c.Toast("已复制 http 命令")
 		}
 	})
@@ -308,7 +326,7 @@ func (a *app) urlBar(c *ui.Context, r *request) {
 	a.synced.id, a.synced.url = r.ID, r.URL
 }
 
-func (a *app) requestPane(c *ui.Context, r *request) {
+func (a *app) requestPane(c *ui.Context, col *collection, r *request) {
 	ui.Column(c).Fill().Children(func() {
 		ui.Row(c).Padding(10, 16).Children(func() {
 			body, auth := "Body", "Auth"
@@ -338,7 +356,7 @@ func (a *app) requestPane(c *ui.Context, r *request) {
 		case 2:
 			a.bodyEditor(c, r)
 		case 3:
-			a.authEditor(c, r)
+			a.authEditor(c, col, r)
 		case 4:
 			settingsEditor(c, r)
 		}
@@ -395,20 +413,31 @@ func (a *app) bodyEditor(c *ui.Context, r *request) {
 	})
 }
 
-func (a *app) authEditor(c *ui.Context, r *request) {
-	vars := a.ranges(c)
+func (a *app) authEditor(c *ui.Context, col *collection, r *request) {
 	ui.Column(c).Grow(1).Padding(0, 16, 16, 16).Gap(12).Children(func() {
-		ui.Row(c).Children(func() { menuSelect(c, "认证方式", &r.AuthType, authTypes) })
+		a.authFields(c, &r.auth, requestAuthTypes)
 		switch r.AuthType {
 		case authNone:
 			caption(c, "此请求不带认证信息")
-		case authBasic, authDigest:
-			ui.Field(c, "用户名", func() { ui.TextInput(c, &r.User).TextRanges(vars(r.User)...) })
-			ui.Field(c, "密码", func() { ui.TextInput(c, &r.Password).Password() })
-		case authBearer:
-			ui.Field(c, "Token", func() { ui.TextInput(c, &r.Token).Font("monospace").TextRanges(vars(r.Token)...) })
+		case authInherit:
+			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+				caption(c, "继承自集合："+col.Auth.AuthType)
+				ui.Button(c, "编辑").OnClick(func() { a.authOf, a.authOpen = col, true })
+			})
 		}
 	})
+}
+
+// authFields edits au, of one of types.
+func (a *app) authFields(c *ui.Context, au *auth, types []string) {
+	ui.Row(c).Children(func() { menuSelect(c, "认证方式", &au.AuthType, types) })
+	switch au.AuthType {
+	case authBasic, authDigest:
+		ui.Field(c, "用户名", func() { a.varInput(c, &au.User) })
+		ui.Field(c, "密码", func() { a.varInput(c, &au.Password).Password() })
+	case authBearer:
+		ui.Field(c, "Token", func() { a.varInput(c, &au.Token).Font("monospace") })
+	}
 }
 
 func (a *app) bulkButton(c *ui.Context) {
@@ -527,7 +556,7 @@ func textView(text, label string, isJSON bool) *editor.State {
 }
 
 func (a *app) send() {
-	_, r := a.ws.find(a.ws.Selected)
+	col, r := a.ws.find(a.ws.Selected)
 	if r == nil {
 		return
 	}
@@ -536,7 +565,7 @@ func (a *app) send() {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	a.inflight[r.ID] = cancel
-	id, args := r.ID, requestArgs(a.env().resolve(r))
+	id, args := r.ID, requestArgs(a.env().resolve(col.effective(r)))
 	go func() {
 		res := send(ctx, args)
 		cancel()
@@ -575,7 +604,7 @@ func (a *app) newRequest(col *collection) {
 }
 
 func (a *app) newCollection() {
-	col := &collection{ID: newID(), Name: "新集合", Open: true}
+	col := &collection{ID: newID(), Name: "新集合", Open: true, Auth: auth{AuthType: authNone}}
 	a.ws.Collections = append(a.ws.Collections, col)
 	a.renaming, a.renameTo, a.renameOpen = col, col.Name, true
 }
@@ -648,6 +677,15 @@ func (a *app) dialogs(c *ui.Context) {
 			ui.Row(c).Gap(8).Justify(ui.End).Children(func() {
 				ui.Button(c, "取消").OnClick(func() { a.renameOpen = false })
 				ui.PrimaryButton(c, "保存").OnClick(rename)
+			})
+		})
+	})
+	ui.Modal(c, &a.authOpen, func() {
+		ui.Column(c).Width(360).Gap(12).Children(func() {
+			ui.Text(c, fmt.Sprintf("集合“%s”的认证", a.authOf.Name)).FontSize(15).Bold()
+			a.authFields(c, &a.authOf.Auth, authTypes)
+			ui.Row(c).Justify(ui.End).Children(func() {
+				ui.PrimaryButton(c, "完成").OnClick(func() { a.authOpen = false })
 			})
 		})
 	})

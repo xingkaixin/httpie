@@ -47,9 +47,9 @@ func TestRequestArgs(t *testing.T) {
 		t.Errorf("args %q, want %q", got, want)
 	}
 
-	r = newRequest("t", "GET", "example.org/a?x=1&sig=a%2Bb#top")
+	r = newRequest("t", "GET", "example.org/a?x=1&sig=a%2Bb&to=@kevin#top")
 	r.Params = parse(r.URL, nil)
-	want = []string{"--follow", "GET", "example.org/a#top", "x==1", "sig==a+b"}
+	want = []string{"--follow", "GET", "example.org/a#top", "x==1", "sig==a+b", `to==\@kevin`}
 	if got := requestArgs((*environment)(nil).resolve(r)); !slices.Equal(got, want) {
 		t.Errorf("args %q, want %q", got, want)
 	}

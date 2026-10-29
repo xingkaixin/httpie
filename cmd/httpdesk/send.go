@@ -109,7 +109,12 @@ func requestArgs(r *request) []string {
 		opts = append(opts, "--timeout="+strconv.FormatFloat(r.Timeout, 'f', -1, 64))
 	}
 	for _, p := range enabled(r.Params) {
-		items = append(items, keySeparators.Replace(p.Key)+"=="+p.Value)
+		v := p.Value
+		// "==@" would read the value from a file.
+		if strings.HasPrefix(v, "@") {
+			v = `\` + v
+		}
+		items = append(items, keySeparators.Replace(p.Key)+"=="+v)
 	}
 	contentType := false
 	for _, h := range enabled(r.Headers) {

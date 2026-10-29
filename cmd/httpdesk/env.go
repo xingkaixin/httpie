@@ -2,8 +2,12 @@ package main
 
 import (
 	"fmt"
+	"maps"
 	"regexp"
 	"slices"
+	"strconv"
+	"time"
+	"uuid"
 
 	"github.com/egoist/mygo/ui"
 	"github.com/xingkaixin/mygo-native-ui/ui/kvtable"
@@ -14,8 +18,17 @@ const kindSecret = "Secret"
 
 var varKinds = []kvtable.Kind{{Name: kindText}, {Name: kindSecret, Cell: kvtable.Secret}}
 
-// variable matches a variable as templatefield writes one.
-var variable = regexp.MustCompile(`\{\{ *([\w.-]+) *\}\}`)
+// variable matches a variable as templatefield writes one, or a dynamic
+// one, which templatefield does not know.
+var variable = regexp.MustCompile(`\{\{ *(\$?[\w.-]+) *\}\}`)
+
+// dynamic are the variables fill makes anew at each use, with an
+// environment or without.
+var dynamic = map[string]func() string{
+	"$uuid":         func() string { return uuid.New().String() },
+	"$timestamp":    func() string { return strconv.FormatInt(time.Now().Unix(), 10) },
+	"$isoTimestamp": func() string { return time.Now().UTC().Format(time.RFC3339) },
+}
 
 type environment struct {
 	ID   string         `json:"id"`
@@ -24,19 +37,23 @@ type environment struct {
 }
 
 // Names, Lookup and fill take a nil environment, as no environment chosen,
-// which defines nothing.
+// which defines only the dynamic variables.
 func (e *environment) Names() []string {
-	if e == nil {
-		return nil
-	}
 	var names []string
-	for _, v := range enabled(e.Vars) {
-		names = append(names, v.Key)
+	if e != nil {
+		for _, v := range enabled(e.Vars) {
+			names = append(names, v.Key)
+		}
 	}
-	return names
+	return append(names, slices.Sorted(maps.Keys(dynamic))...)
 }
 
 func (e *environment) Lookup(name string) (value, source string, secret, ok bool) {
+	// templatefield looks values up each frame, so a dynamic one is made
+	// only by fill.
+	if _, ok := dynamic[name]; ok {
+		return "发送时生成", "内置", false, true
+	}
 	if e == nil {
 		return "", "", false, false
 	}
@@ -49,7 +66,11 @@ func (e *environment) Lookup(name string) (value, source string, secret, ok bool
 
 func (e *environment) fill(s string) string {
 	return variable.ReplaceAllStringFunc(s, func(m string) string {
-		if v, _, _, ok := e.Lookup(variable.FindStringSubmatch(m)[1]); ok {
+		name := variable.FindStringSubmatch(m)[1]
+		if gen, ok := dynamic[name]; ok {
+			return gen()
+		}
+		if v, _, _, ok := e.Lookup(name); ok {
 			return v
 		}
 		return m

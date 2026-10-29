@@ -500,7 +500,6 @@ func (a *app) send() {
 		a.win.Update(func() {
 			delete(a.inflight, id)
 			a.responses[id] = res
-			a.resTab = 0
 		})
 	}()
 }

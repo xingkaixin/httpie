@@ -147,9 +147,7 @@ func requestArgs(r *request) []string {
 			items = append(items, "@"+r.BodyFile)
 		}
 	}
-	// The URL's query goes as the Params it is synced with, which core
-	// escapes once their variables are filled in.
-	positional := append([]string{r.Method, withQuery(r.URL, nil)}, items...)
+	positional := append([]string{r.Method, r.URL}, items...)
 	if slices.ContainsFunc(positional, func(s string) bool { return strings.HasPrefix(s, "-") }) {
 		opts = append(opts, "--")
 	}

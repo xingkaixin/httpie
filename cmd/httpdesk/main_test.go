@@ -50,7 +50,14 @@ func TestRequestArgs(t *testing.T) {
 	r = newRequest("t", "GET", "example.org/a?x=1&sig=a%2Bb#top")
 	r.Params = parse(r.URL, nil)
 	want = []string{"--follow", "GET", "example.org/a#top", "x==1", "sig==a+b"}
-	if got := requestArgs(r); !slices.Equal(got, want) {
+	if got := requestArgs((*environment)(nil).resolve(r)); !slices.Equal(got, want) {
+		t.Errorf("args %q, want %q", got, want)
+	}
+
+	env := &environment{Vars: []kvtable.Pair{{On: true, Key: "next", Value: "example.org/a?page=2"}}}
+	r = newRequest("t", "GET", "{{next}}")
+	want = []string{"--follow", "GET", "example.org/a?page=2"}
+	if got := requestArgs(env.resolve(r)); !slices.Equal(got, want) {
 		t.Errorf("args %q, want %q", got, want)
 	}
 }

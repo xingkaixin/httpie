@@ -88,7 +88,10 @@ func (e *environment) fillPairs(pairs []kvtable.Pair) []kvtable.Pair {
 // resolve returns a copy of r with the variables e defines filled in.
 func (e *environment) resolve(r *request) *request {
 	cp := *r
-	cp.URL, cp.Body, cp.BodyFile = e.fill(r.URL), e.fill(r.Body), e.fill(r.BodyFile)
+	// The URL's query goes as the Params it is synced with, which core
+	// escapes once their variables are filled in. A query a variable
+	// brings goes as it is.
+	cp.URL, cp.Body, cp.BodyFile = e.fill(withQuery(r.URL, nil)), e.fill(r.Body), e.fill(r.BodyFile)
 	cp.User, cp.Password, cp.Token = e.fill(r.User), e.fill(r.Password), e.fill(r.Token)
 	cp.Params, cp.Headers, cp.Form = e.fillPairs(r.Params), e.fillPairs(r.Headers), e.fillPairs(r.Form)
 	return &cp

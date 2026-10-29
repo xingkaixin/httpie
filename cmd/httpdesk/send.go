@@ -37,8 +37,10 @@ type response struct {
 	Truncated bool
 	Duration  time.Duration
 	Redirects []hop
+	Sent      string
 	Err       string
 	view      *editor.State
+	sentView  *editor.State
 }
 
 // sendFlags go with every request the app sends, but not into the command
@@ -124,15 +126,30 @@ func command(args []string) string {
 	return strings.Join(parts, " ")
 }
 
-// recorder keeps the responses an exchange shows: the redirects, then the
-// last one.
+// recorder keeps each request of an exchange as sent, and the responses it
+// shows: the redirects, then the last one.
 type recorder struct {
+	out     *core.Output
+	buf     bytes.Buffer
+	sent    []string
 	hops    []hop
 	headers []core.Header
 }
 
-func (rec *recorder) Request(*core.Request, bool) error { return nil }
-func (rec *recorder) Sent(*core.Request) error          { return nil }
+// Request prints r now, as the exchange changes it in place for the next one.
+func (rec *recorder) Request(r *core.Request, _ bool) error {
+	rec.buf.Reset()
+	rec.out.WriteRequest(r, "H")
+	head := rec.buf.Len()
+	// WriteRequest leaves out the bodies core streams, as files.
+	if rec.out.WriteRequest(r, "B") == nil && rec.buf.Len() == head && r.ContentLength > 0 {
+		fmt.Fprintf(&rec.buf, "<流式 Body，%s，未显示>", formatSize(int(r.ContentLength)))
+	}
+	rec.sent = append(rec.sent, strings.TrimRight(strings.ReplaceAll(rec.buf.String(), "\r\n", "\n"), "\n"))
+	return nil
+}
+
+func (rec *recorder) Sent(*core.Request) error { return nil }
 func (rec *recorder) Response(r *http.Response, headers []core.Header, _ time.Time) error {
 	rec.hops = append(rec.hops, hop{r.Status, r.StatusCode, r.Header.Get("Location")})
 	rec.headers = headers
@@ -155,6 +172,15 @@ func exchange(ctx context.Context, args []string) (*response, error) {
 	if err != nil {
 		return nil, err
 	}
+	// --pretty=format would sort the requests' headers and JSON keys.
+	plain, err := core.ParseOptions(append([]string{"--pretty=none"}, args...))
+	if err != nil {
+		return nil, err
+	}
+	rec := &recorder{}
+	if rec.out, err = core.NewOutput(&rec.buf, false, plain); err != nil {
+		return nil, err
+	}
 	ex, err := core.Prepare(o, "http", nil, true)
 	if err != nil {
 		return nil, err
@@ -164,7 +190,6 @@ func exchange(ctx context.Context, args []string) (*response, error) {
 		return nil, err
 	}
 	start := time.Now()
-	rec := &recorder{}
 	resp, err := ex.Do(ctx, rec)
 	if err != nil {
 		return nil, err
@@ -187,6 +212,7 @@ func exchange(ctx context.Context, args []string) (*response, error) {
 		Size:      len(data),
 		Duration:  time.Since(start),
 		Redirects: rec.hops[:len(rec.hops)-1],
+		Sent:      strings.Join(rec.sent, "\n\n"),
 	}
 	if decodeErr != nil {
 		res.Body = decodeErr.Error()

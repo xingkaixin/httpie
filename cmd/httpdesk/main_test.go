@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/xingkaixin/mygo-native-ui/ui/kvtable"
@@ -28,6 +29,9 @@ func TestSendRequest(t *testing.T) {
 	want := "{\n  \"q\": \"go\",\n  \"auth\": \"Bearer abc\",\n  \"body\": {\n    \"n\": 1\n  }\n}"
 	if res.Code != 200 || !res.JSON || res.Body != want {
 		t.Errorf("response %d json=%v body %q err %q", res.Code, res.JSON, res.Body, res.Err)
+	}
+	if !strings.HasPrefix(res.Sent, "POST /?q=go HTTP/1.1\n") || !strings.HasSuffix(res.Sent, "\n\n{\"n\":1}") {
+		t.Errorf("sent %q", res.Sent)
 	}
 }
 

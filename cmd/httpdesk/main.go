@@ -430,7 +430,7 @@ func (a *app) responsePane(c *ui.Context, r *request) {
 			if res != nil && len(res.Headers) > 0 {
 				headers = fmt.Sprintf("Headers %d", len(res.Headers))
 			}
-			ui.Segmented(c, &a.resTab, "Response", headers).Label("响应内容")
+			ui.Segmented(c, &a.resTab, "Body", headers, "Request").Label("响应内容")
 			ui.Spacer(c)
 			if res == nil || res.Code == 0 || sending {
 				return
@@ -439,9 +439,9 @@ func (a *app) responsePane(c *ui.Context, r *request) {
 			ui.Row(c).Padding(3, 8).Radius(6).Background(color.Alpha(0.14)).Children(func() {
 				ui.Text(c, res.Status).FontSize(12).FontWeight(600).TextColor(color).SingleLine()
 			})
-			caption(c, res.Duration.Round(time.Millisecond).String()).FontFeatures("tnum").SingleLine()
-			caption(c, formatSize(res.Size)).SingleLine()
-			if iconButton(c, iconCopy, "复制响应").Clicked() {
+			caption(c, res.Duration.Round(time.Millisecond).String()).FontFeatures("tnum").SingleLine().Shrink(0)
+			caption(c, formatSize(res.Size)).SingleLine().Shrink(0)
+			if iconButton(c, iconCopy, "复制响应").Shrink(0).Clicked() {
 				c.WriteClipboard(res.Body)
 				c.Toast("已复制响应内容")
 			}
@@ -483,6 +483,8 @@ func (a *app) responsePane(c *ui.Context, r *request) {
 					})
 				}
 			})
+		case a.resTab == 2:
+			editor.View(c.Key("sent-"+r.ID), res.sentView).Grow(1).Margin(0, 16, 16, 16)
 		default:
 			if res.Truncated {
 				caption(c, "响应超过 10 MB，只显示前 10 MB").Padding(0, 16, 6, 16)
@@ -492,20 +494,20 @@ func (a *app) responsePane(c *ui.Context, r *request) {
 	})
 }
 
-// bodyView returns a read-only editor of res's body.
-func bodyView(res *response) *editor.State {
-	buf := editor.NewBuffer(res.Body)
-	if res.JSON {
+// textView returns a read-only editor of text.
+func textView(text, label string, isJSON bool) *editor.State {
+	buf := editor.NewBuffer(text)
+	if isJSON {
 		buf.SetLanguage(editor.LanguageFor("body.json"))
 	}
 	return &editor.State{
 		Buffer:          buf,
 		Font:            ui.Font{Size: 12.5},
 		ReadOnly:        true,
-		SoftWrap:        !res.JSON,
+		SoftWrap:        !isJSON,
 		NoActiveLine:    true,
 		NoScrollPastEnd: true,
-		Label:           "响应 Body",
+		Label:           label,
 	}
 }
 
@@ -523,7 +525,8 @@ func (a *app) send() {
 	go func() {
 		res := send(ctx, args)
 		cancel()
-		res.view = bodyView(res)
+		res.view = textView(res.Body, "响应 Body", res.JSON)
+		res.sentView = textView(res.Sent, "实际发出的请求", false)
 		a.win.Update(func() {
 			delete(a.inflight, id)
 			a.responses[id] = res

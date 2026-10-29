@@ -528,6 +528,7 @@ func (a *app) responsePane(c *ui.Context, r *request) {
 		a.loadResponse(r.ID)
 	}
 	_, sending := a.inflight[r.ID]
+	waiting := sending && (res == nil || !res.streaming)
 	ui.Column(c).Fill().Children(func() {
 		ui.Row(c).Padding(10, 16).Gap(10).AlignItems(ui.Center).Children(func() {
 			headers := "Headers"
@@ -536,7 +537,7 @@ func (a *app) responsePane(c *ui.Context, r *request) {
 			}
 			ui.Segmented(c, &a.resTab, "Body", headers, "Request").Label("响应内容")
 			ui.Spacer(c)
-			if res == nil || res.Code == 0 || sending {
+			if res == nil || res.Code == 0 || waiting {
 				return
 			}
 			color := statusColor(res.Code)
@@ -549,12 +550,12 @@ func (a *app) responsePane(c *ui.Context, r *request) {
 				caption(c, at).Tooltip(res.At.Format("2006-01-02 15:04:05")).SingleLine().Shrink(0)
 			}
 			if iconButton(c, iconCopy, "复制响应").Shrink(0).Clicked() {
-				c.WriteClipboard(res.Body)
+				c.WriteClipboard(res.view.Buffer.String())
 				c.Toast("已复制响应内容")
 			}
 		})
 		switch {
-		case sending:
+		case waiting:
 			ui.Column(c).Grow(1).Center().Gap(10).Children(func() {
 				ui.Spinner(c)
 				caption(c, "请求中…")
@@ -593,6 +594,9 @@ func (a *app) responsePane(c *ui.Context, r *request) {
 		case a.resTab == 2:
 			editor.View(c.Key("sent-"+r.ID), res.sentView).Grow(1).Margin(0, 16, 16, 16)
 		default:
+			if res.Err != "" {
+				caption(c, res.Err).Padding(0, 16, 6, 16)
+			}
 			if res.Truncated {
 				caption(c, "响应超过 10 MB，只显示前 10 MB").Padding(0, 16, 6, 16)
 			}
@@ -606,6 +610,23 @@ func (a *app) responsePane(c *ui.Context, r *request) {
 func (res *response) buildViews() {
 	res.view = textView(res.Body, "响应 Body", res.JSON)
 	res.sentView = textView(res.Sent, "实际发出的请求", false)
+}
+
+// appendText adds text to the end of st, which follows it there unless
+// the end is out of view or the caret is elsewhere.
+func appendText(st *editor.State, text string) {
+	if text == "" {
+		return
+	}
+	b := st.Buffer
+	n := b.Len()
+	_, last := st.VisibleLines()
+	sel := st.Selection()
+	follow := sel.Anchor == n && sel.Head == n && last >= b.LineCount()-1
+	b.Edit(editor.Edit{Start: n, End: n, Text: text})
+	if follow {
+		st.Select(b.Len(), b.Len())
+	}
 }
 
 // textView returns a read-only editor of text.
@@ -639,15 +660,30 @@ func (a *app) send() {
 	id, args, jar := r.ID, requestArgs(req), a.ws.Cookies
 	// Variables go to the environment the request was sent with.
 	rules, envID := enabled(r.Extract), a.ws.Env
+	var live *response
+	progress := func(p response, text string) {
+		a.win.Update(func() {
+			if live == nil {
+				live = &p
+				live.streaming = true
+				a.responses[id] = live
+			}
+			live.Size, live.Duration = p.Size, p.Duration
+			appendText(live.view, text)
+		})
+	}
 	go func() {
-		res := send(ctx, append(systemProxy(req.URL), args...), jar)
+		res := send(ctx, append(systemProxy(req.URL), args...), jar, progress)
 		cancel()
 		if res == nil {
 			// A canceled request keeps the response it had.
 			a.win.Update(func() { delete(a.inflight, id) })
 			return
 		}
-		res.buildViews()
+		// A body streamed has the views that showed it.
+		if res.view == nil {
+			res.buildViews()
+		}
 		if res.Code != 0 {
 			saveResponse(a.resDir, id, res)
 		}
@@ -660,7 +696,7 @@ func (a *app) send() {
 		a.win.Update(func() {
 			delete(a.inflight, id)
 			a.responses[id] = res
-			if res.Err == "" {
+			if res.Code != 0 {
 				a.ws.Cookies = res.Cookies
 			}
 			if extracting {

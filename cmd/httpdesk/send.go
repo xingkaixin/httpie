@@ -6,12 +6,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"net/url"
 	"regexp"
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -22,6 +24,9 @@ import (
 )
 
 const maxBody = 10 << 20
+
+// streamEvery is how often a body streaming shows what came of it.
+const streamEvery = 200 * time.Millisecond
 
 type hop struct {
 	Status   string
@@ -45,6 +50,7 @@ type response struct {
 	At        time.Time
 	view      *editor.State
 	sentView  *editor.State
+	streaming bool
 }
 
 // sendFlags go with every request the app sends, but not into the command
@@ -194,10 +200,12 @@ func (rec *recorder) Response(r *http.Response, headers []core.Header, _ time.Ti
 }
 
 // send sends the request of args with the cookies of jar; the response has
-// the jar as the exchange left it. It returns nil once ctx is canceled.
-func send(ctx context.Context, args []string, jar []core.Cookie) *response {
-	res, err := exchange(ctx, args, jar)
-	if ctx.Err() != nil {
+// the jar as the exchange left it. A body of events streams to progress,
+// as streamBody tells. It returns nil once ctx is canceled, unless a body
+// was streaming.
+func send(ctx context.Context, args []string, jar []core.Cookie, progress func(response, string)) *response {
+	res, err := exchange(ctx, args, jar, progress)
+	if err != nil && ctx.Err() != nil {
 		return nil
 	}
 	if err != nil {
@@ -206,7 +214,7 @@ func send(ctx context.Context, args []string, jar []core.Cookie) *response {
 	return res
 }
 
-func exchange(ctx context.Context, args []string, jar []core.Cookie) (*response, error) {
+func exchange(ctx context.Context, args []string, jar []core.Cookie, progress func(response, string)) (*response, error) {
 	o, err := core.ParseOptions(append(slices.Clone(sendFlags), args...))
 	if err != nil {
 		return nil, err
@@ -234,6 +242,21 @@ func exchange(ctx context.Context, args []string, jar []core.Cookie) (*response,
 	if err != nil {
 		return nil, err
 	}
+	res := &response{
+		Status:    resp.Status,
+		Code:      resp.StatusCode,
+		Headers:   rec.headers,
+		Redirects: rec.hops[:len(rec.hops)-1],
+		Sent:      strings.Join(rec.sent, "\n\n"),
+		Cookies:   ex.Cookies(),
+		At:        start,
+	}
+	if media, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type")); media == "text/event-stream" {
+		streamBody(ctx, o, resp, res, progress)
+		ex.Close()
+		resp.Body.Close()
+		return res, nil
+	}
 	body, closeBody, decodeErr := core.DecodedBody(resp)
 	var data []byte
 	if decodeErr == nil {
@@ -245,17 +268,7 @@ func exchange(ctx context.Context, args []string, jar []core.Cookie) (*response,
 	if err != nil {
 		return nil, err
 	}
-	res := &response{
-		Status:    resp.Status,
-		Code:      resp.StatusCode,
-		Headers:   rec.headers,
-		Size:      len(data),
-		Duration:  time.Since(start),
-		Redirects: rec.hops[:len(rec.hops)-1],
-		Sent:      strings.Join(rec.sent, "\n\n"),
-		Cookies:   ex.Cookies(),
-		At:        start,
-	}
+	res.Size, res.Duration = len(data), time.Since(start)
 	if decodeErr != nil {
 		res.Body = decodeErr.Error()
 		return res, nil
@@ -265,6 +278,103 @@ func exchange(ctx context.Context, args []string, jar []core.Cookie) (*response,
 	}
 	res.Body, res.JSON = displayBody(o, resp, rec.headers, data)
 	return res, nil
+}
+
+// streamBody reads a body of events as it comes, formatted line by line
+// as the http command does. progress has res first, then, every
+// streamEvery, res with its size and duration so far and the text shown
+// since. A body cut short keeps what came, with why in Err.
+func streamBody(ctx context.Context, o core.Options, resp *http.Response, res *response, progress func(response, string)) {
+	res.buildViews()
+	progress(*res, "")
+	s := &stream{}
+	flush := func() {
+		var text string
+		text, res.Size = s.take()
+		res.Duration = time.Since(res.At)
+		progress(*res, text)
+	}
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Go(func() {
+		t := time.NewTicker(streamEvery)
+		defer t.Stop()
+		for {
+			select {
+			case <-t.C:
+				flush()
+			case <-stop:
+				return
+			}
+		}
+	})
+	// DecodedBody waits for the first event.
+	body, closeBody, err := core.DecodedBody(resp)
+	if err == nil {
+		s.body = body
+		var printer *core.Output
+		if printer, err = core.NewOutput(s, true, o); err == nil {
+			err = printer.WriteResponse(decoded(resp, s), res.Headers, "b", time.Time{})
+		}
+		closeBody()
+	}
+	close(stop)
+	wg.Wait()
+	flush()
+	res.Body, res.Truncated = string(s.text), s.size >= maxBody
+	switch {
+	case ctx.Err() != nil:
+		res.Err = "已取消，只显示取消前收到的内容"
+	case err != nil:
+		res.Err = "接收中断：" + err.Error()
+	}
+}
+
+// stream passes a body to core up to maxBody, and keeps the text core
+// writes of it for streamBody to take as it comes.
+type stream struct {
+	body  io.Reader
+	mu    sync.Mutex
+	size  int
+	text  []byte
+	taken int
+}
+
+func (s *stream) Read(p []byte) (int, error) {
+	if s.size >= maxBody {
+		return 0, io.EOF
+	}
+	n, err := s.body.Read(p[:min(len(p), maxBody-s.size)])
+	s.mu.Lock()
+	s.size += n
+	s.mu.Unlock()
+	return n, err
+}
+
+func (s *stream) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	s.text = append(s.text, p...)
+	s.mu.Unlock()
+	return len(p), nil
+}
+
+// take returns the text written since it last did, and the size of the
+// body read so far.
+func (s *stream) take() (string, int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	text := string(s.text[s.taken:])
+	s.taken = len(s.text)
+	return text, s.size
+}
+
+// decoded returns resp with body, decoded, for its body.
+func decoded(resp *http.Response, body io.Reader) *http.Response {
+	d := *resp
+	d.Header = resp.Header.Clone()
+	d.Header.Del("Content-Encoding")
+	d.Body = io.NopCloser(body)
+	return &d
 }
 
 // displayBody formats a decoded response body. JSON is only re-indented,
@@ -279,14 +389,10 @@ func displayBody(o core.Options, resp *http.Response, headers []core.Header, pla
 	if utf8.Valid(plain) && json.Indent(&indented, bytes.TrimSpace(plain), "", "  ") == nil {
 		return indented.String(), true
 	}
-	decoded := *resp
-	decoded.Header = resp.Header.Clone()
-	decoded.Header.Del("Content-Encoding")
-	decoded.Body = io.NopCloser(bytes.NewReader(plain))
 	var out bytes.Buffer
 	printer, err := core.NewOutput(&out, true, o)
 	if err == nil {
-		err = printer.WriteResponse(&decoded, headers, "b", time.Time{})
+		err = printer.WriteResponse(decoded(resp, bytes.NewReader(plain)), headers, "b", time.Time{})
 	}
 	if err != nil {
 		return string(plain), false

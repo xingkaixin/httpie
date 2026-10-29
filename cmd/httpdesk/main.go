@@ -322,7 +322,7 @@ func (a *app) requestPane(c *ui.Context, r *request) {
 		case 2:
 			a.bodyEditor(c, r)
 		case 3:
-			authEditor(c, r)
+			a.authEditor(c, r)
 		case 4:
 			settingsEditor(c, r)
 		}
@@ -336,8 +336,10 @@ func (a *app) bodyEditor(c *ui.Context, r *request) {
 			menuSelect(c, "Body 类型", &r.BodyType, bodyTypes)
 			ui.Spacer(c)
 			if r.BodyType == bodyJSON {
+				// Variables may stand for values, as in {"id": {{id}}}, so the body is
+				// checked as sent; formatting works on it as written.
 				valid := json.Valid([]byte(r.Body))
-				if !valid && r.Body != "" {
+				if !valid && r.Body != "" && !json.Valid([]byte(a.env().fill(r.Body))) {
 					ui.Text(c, "JSON 格式有误").FontSize(12).TextColor(t.Danger)
 				}
 				ui.Button(c, "格式化").Disabled(!valid).OnClick(func() {
@@ -372,21 +374,23 @@ func (a *app) bodyEditor(c *ui.Context, r *request) {
 			if r.BodyType == bodyJSON {
 				ed.Placeholder("{\n  \"key\": \"value\"\n}").TextRanges(a.bodyHL.ranges(t, r.Body)...)
 			}
+			ed.TextRanges(templatefield.Ranges(r.Body, a.env(), t)...)
 		}
 	})
 }
 
-func authEditor(c *ui.Context, r *request) {
+func (a *app) authEditor(c *ui.Context, r *request) {
+	vars := a.ranges(c)
 	ui.Column(c).Grow(1).Padding(0, 16, 16, 16).Gap(12).Children(func() {
 		ui.Row(c).Children(func() { menuSelect(c, "认证方式", &r.AuthType, authTypes) })
 		switch r.AuthType {
 		case authNone:
 			caption(c, "此请求不带认证信息")
 		case authBasic, authDigest:
-			ui.Field(c, "用户名", func() { ui.TextInput(c, &r.User) })
+			ui.Field(c, "用户名", func() { ui.TextInput(c, &r.User).TextRanges(vars(r.User)...) })
 			ui.Field(c, "密码", func() { ui.TextInput(c, &r.Password).Password() })
 		case authBearer:
-			ui.Field(c, "Token", func() { ui.TextInput(c, &r.Token).Font("monospace") })
+			ui.Field(c, "Token", func() { ui.TextInput(c, &r.Token).Font("monospace").TextRanges(vars(r.Token)...) })
 		}
 	})
 }

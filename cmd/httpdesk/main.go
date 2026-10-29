@@ -667,6 +667,9 @@ func (a *app) send() {
 				live = &p
 				live.streaming = true
 				a.responses[id] = live
+				// A stream may stay open for long, so its cookies go in now,
+				// not over those set while it is open.
+				a.ws.Cookies = p.Cookies
 			}
 			live.Size, live.Duration = p.Size, p.Duration
 			appendText(live.view, text)
@@ -681,7 +684,8 @@ func (a *app) send() {
 			return
 		}
 		// A body streamed has the views that showed it.
-		if res.view == nil {
+		streamed := res.view != nil
+		if !streamed {
 			res.buildViews()
 		}
 		if res.Code != 0 {
@@ -696,7 +700,7 @@ func (a *app) send() {
 		a.win.Update(func() {
 			delete(a.inflight, id)
 			a.responses[id] = res
-			if res.Code != 0 {
+			if res.Code != 0 && !streamed {
 				a.ws.Cookies = res.Cookies
 			}
 			if extracting {

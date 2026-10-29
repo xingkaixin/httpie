@@ -227,7 +227,7 @@ func exchange(ctx context.Context, args []string, jar []core.Cookie, progress fu
 	if err != nil {
 		return nil, err
 	}
-	// --pretty=format would sort the requests' headers and JSON keys.
+	// The Request tab shows bodies as sent, which --pretty=format would reindent.
 	plain, err := core.ParseOptions(append([]string{"--pretty=none"}, args...))
 	if err != nil {
 		return nil, err

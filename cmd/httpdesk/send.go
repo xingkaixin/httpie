@@ -164,7 +164,12 @@ func exchange(ctx context.Context, args []string) (*response, error) {
 	if err != nil {
 		return nil, err
 	}
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxBody+1))
+	body, closeBody, decodeErr := core.DecodedBody(resp)
+	var data []byte
+	if decodeErr == nil {
+		data, err = io.ReadAll(io.LimitReader(body, maxBody+1))
+		closeBody()
+	}
 	ex.Close()
 	resp.Body.Close()
 	if err != nil {
@@ -178,6 +183,10 @@ func exchange(ctx context.Context, args []string) (*response, error) {
 		Duration:  time.Since(start),
 		Redirects: rec.hops[:len(rec.hops)-1],
 	}
+	if decodeErr != nil {
+		res.Body = decodeErr.Error()
+		return res, nil
+	}
 	if len(data) > maxBody {
 		data, res.Truncated = data[:maxBody], true
 	}
@@ -185,20 +194,9 @@ func exchange(ctx context.Context, args []string) (*response, error) {
 	return res, nil
 }
 
-// displayBody formats a response body as the http command does with
-// --pretty=format.
-func displayBody(o core.Options, resp *http.Response, headers []core.Header, data []byte) (string, bool) {
-	encoded := *resp
-	encoded.Body = io.NopCloser(bytes.NewReader(data))
-	reader, closeBody, err := core.DecodedBody(&encoded)
-	if err != nil {
-		return err.Error(), false
-	}
-	plain, err := io.ReadAll(reader)
-	closeBody()
-	if err != nil {
-		plain = data
-	}
+// displayBody formats a decoded response body as the http command does
+// with --pretty=format.
+func displayBody(o core.Options, resp *http.Response, headers []core.Header, plain []byte) (string, bool) {
 	if bytes.IndexByte(plain, 0) >= 0 {
 		return fmt.Sprintf("<二进制内容，%s>", formatSize(len(plain))), false
 	}

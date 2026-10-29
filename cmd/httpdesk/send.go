@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"httpie/internal/core"
 )
@@ -38,8 +39,9 @@ type response struct {
 }
 
 // sendFlags go with every request the app sends, but not into the command
-// it copies: --all reports redirects, --pretty=format formats the body.
-var sendFlags = []string{"--all", "--pretty=format"}
+// it copies: --all reports redirects, --pretty=format formats the body, and
+// the rest keep the server's key order and indent as displayBody does.
+var sendFlags = []string{"--all", "--pretty=format", "--unsorted", "--format-options=json.indent:2"}
 
 // keySeparators are what parseItem splits an item at, which a key escapes.
 var keySeparators = strings.NewReplacer(":", `\:`, ";", `\;`, "=", `\=`, "@", `\@`)
@@ -194,11 +196,17 @@ func exchange(ctx context.Context, args []string) (*response, error) {
 	return res, nil
 }
 
-// displayBody formats a decoded response body as the http command does
-// with --pretty=format.
+// displayBody formats a decoded response body. JSON is only re-indented,
+// keeping its key order and literals as the server wrote them; anything
+// else is formatted as the http command does with --pretty=format.
 func displayBody(o core.Options, resp *http.Response, headers []core.Header, plain []byte) (string, bool) {
 	if bytes.IndexByte(plain, 0) >= 0 {
 		return fmt.Sprintf("<二进制内容，%s>", formatSize(len(plain))), false
+	}
+	// Non-UTF-8 text is left to core, which decodes its charset.
+	var indented bytes.Buffer
+	if utf8.Valid(plain) && json.Indent(&indented, bytes.TrimSpace(plain), "", "  ") == nil {
+		return indented.String(), true
 	}
 	decoded := *resp
 	decoded.Header = resp.Header.Clone()

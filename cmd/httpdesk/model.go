@@ -48,11 +48,12 @@ type workspace struct {
 }
 
 const (
-	bodyNone = "None"
-	bodyJSON = "JSON"
-	bodyText = "Text"
-	bodyForm = "Form"
-	bodyFile = "File"
+	bodyNone      = "None"
+	bodyJSON      = "JSON"
+	bodyText      = "Text"
+	bodyForm      = "Form"
+	bodyMultipart = "Multipart"
+	bodyFile      = "File"
 
 	kindText = "Text"
 	kindFile = "File"
@@ -65,7 +66,7 @@ const (
 
 var (
 	methods   = []string{"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"}
-	bodyTypes = []string{bodyNone, bodyJSON, bodyText, bodyForm, bodyFile}
+	bodyTypes = []string{bodyNone, bodyJSON, bodyText, bodyForm, bodyMultipart, bodyFile}
 	authTypes = []string{authNone, authBasic, authDigest, authBearer}
 	idSeq     atomic.Int64
 )

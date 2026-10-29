@@ -92,8 +92,12 @@ func requestArgs(r *request) []string {
 		if r.BodyType == bodyText && !contentType {
 			items = append(items, "Content-Type:text/plain; charset=utf-8")
 		}
-	case bodyForm:
-		opts = append(opts, "--form")
+	case bodyForm, bodyMultipart:
+		flag := "--form"
+		if r.BodyType == bodyMultipart {
+			flag = "--multipart"
+		}
+		opts = append(opts, flag)
 		for _, f := range enabled(r.Form) {
 			sep := "="
 			if f.Kind == kindFile {

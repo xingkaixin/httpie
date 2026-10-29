@@ -354,7 +354,7 @@ func (a *app) bodyEditor(c *ui.Context, r *request) {
 		switch r.BodyType {
 		case bodyNone:
 			ui.Column(c).Grow(1).Center().Children(func() { caption(c, "此请求不带 Body") })
-		case bodyForm:
+		case bodyForm, bodyMultipart:
 			ui.Scroll(c).Grow(1).Children(func() {
 				kvtable.EditorWith(c.Key("form-"+r.ID), &r.Form, kvtable.Options{
 					KeyLabel: "字段", ValueLabel: "值", Kinds: formKinds, Choose: a.chooseFile, Ranges: a.ranges(c), Reorder: true,

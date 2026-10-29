@@ -609,9 +609,10 @@ func (a *app) send() {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	a.inflight[r.ID] = cancel
-	id, args, jar := r.ID, requestArgs(a.env().resolve(col.effective(r))), a.ws.Cookies
+	req := a.env().resolve(col.effective(r))
+	id, args, jar := r.ID, requestArgs(req), a.ws.Cookies
 	go func() {
-		res := send(ctx, args, jar)
+		res := send(ctx, append(systemProxy(req.URL), args...), jar)
 		cancel()
 		res.view = textView(res.Body, "响应 Body", res.JSON)
 		res.sentView = textView(res.Sent, "实际发出的请求", false)

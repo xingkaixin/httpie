@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"regexp"
 	"slices"
 	"strconv"
@@ -14,6 +15,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/egoist/mygo/netproxy"
 	"github.com/egoist/mygo/ui/editor"
 
 	"httpie/internal/core"
@@ -48,6 +50,33 @@ type response struct {
 // it copies: --all reports redirects, --pretty=format formats the body, and
 // the rest keep the server's key order and indent as displayBody does.
 var sendFlags = []string{"--all", "--pretty=format", "--unsorted", "--format-options=json.indent:2"}
+
+var hasScheme = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9+.-]*://`)
+
+// systemProxy returns the option sending a request for rawURL through the
+// system's proxy, as browsers do: core reads proxies only from the
+// environment, which has none for an app opened from the Dock. It may
+// block while the system runs a PAC file.
+func systemProxy(rawURL string) []string {
+	// The URL is completed as core does, or ":3000" would be looked up
+	// as no host rather than localhost, which goes direct.
+	rawURL = strings.TrimPrefix(rawURL, "://")
+	if !hasScheme.MatchString(rawURL) {
+		if strings.HasPrefix(rawURL, ":") {
+			rawURL = "localhost" + rawURL
+		}
+		rawURL = "http://" + rawURL
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return nil
+	}
+	proxy, err := netproxy.Proxy(&http.Request{URL: u})
+	if err != nil || proxy == nil {
+		return nil
+	}
+	return []string{"--proxy=" + u.Scheme + ":" + proxy.String()}
+}
 
 // keySeparators are what parseItem splits an item at, which a key escapes.
 var keySeparators = strings.NewReplacer(":", `\:`, ";", `\;`, "=", `\=`, "@", `\@`)

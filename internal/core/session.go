@@ -97,6 +97,9 @@ func SaveJSON(filename string, data any) error {
 	return os.Rename(f.Name(), filename)
 }
 
+// Cookie is a cookie of a jar, as a session file stores it.
+type Cookie = storedCookie
+
 type storedCookie struct {
 	Name    string  `json:"name"`
 	Value   string  `json:"value"`
@@ -285,6 +288,12 @@ func (s *session) updateHeaders(r *Request, o Options) error {
 		r.deleteHeader("Cookie")
 	}
 	return nil
+}
+func (s *session) addCookies(r *Request) {
+	if cookie := s.cookiesFor(r.URL); cookie != "" && r.Header.Get("Cookie") == "" {
+		r.SetHeader("Cookie", cookie)
+		r.moveHeaderBefore("Cookie", "User-Agent")
+	}
 }
 func (s *session) cookiesFor(u *url.URL) string {
 	now := time.Now().Unix()

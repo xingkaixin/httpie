@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 )
@@ -89,11 +90,20 @@ func (e *Exchange) authenticate() (err error) {
 	if kind := e.auth.kind; kind != "" && kind != "basic" && kind != "digest" && kind != "bearer" {
 		return fmt.Errorf("unsupported session authentication type: %s", kind)
 	}
-	if cookie := s.cookiesFor(req.URL); cookie != "" && req.Header.Get("Cookie") == "" {
-		req.SetHeader("Cookie", cookie)
-		req.moveHeaderBefore("Cookie", "User-Agent")
-	}
+	s.addCookies(req)
 	return nil
+}
+
+// SetCookies gives the exchange a jar in place of its session's, sending
+// the cookies that match unless the request has its own Cookie header.
+func (e *Exchange) SetCookies(cookies []Cookie) {
+	e.session.cookies = slices.Clone(cookies)
+	e.session.addCookies(e.Request)
+}
+
+// Cookies returns the jar as the exchange left it.
+func (e *Exchange) Cookies() []Cookie {
+	return e.session.cookies
 }
 
 // Open sets up the transport, apart from prepare so that the CLI's update
@@ -233,10 +243,7 @@ func (e *Exchange) Do(ctx context.Context, obs Observer) (*http.Response, error)
 		if !digest {
 			r.deleteHeader("Cookie")
 		}
-		if cookie := s.cookiesFor(r.URL); cookie != "" && r.Header.Get("Cookie") == "" {
-			r.SetHeader("Cookie", cookie)
-			r.moveHeaderBefore("Cookie", "User-Agent")
-		}
+		s.addCookies(r)
 		if r.ContentLength != 0 || len(r.TransferEncoding) > 0 {
 			r.Body, err = r.GetBody()
 			if err != nil {

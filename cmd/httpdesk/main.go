@@ -63,6 +63,7 @@ type app struct {
 	responses map[string]*response
 	inflight  map[string]context.CancelFunc
 	url       ui.Handle
+	synced    struct{ id, url string }
 
 	reqTab, resTab int
 	bulk           bool
@@ -294,6 +295,12 @@ func (a *app) urlBar(c *ui.Context, r *request) {
 			})
 		}
 	})
+	// Only an edit of the URL is parsed: parsing on a switch of requests
+	// would move the parameters that are off to the end.
+	if a.synced.id == r.ID && a.synced.url != r.URL {
+		r.Params = parse(r.URL, r.Params)
+	}
+	a.synced.id, a.synced.url = r.ID, r.URL
 }
 
 func (a *app) requestPane(c *ui.Context, r *request) {
@@ -313,7 +320,10 @@ func (a *app) requestPane(c *ui.Context, r *request) {
 			ui.Scroll(c).Grow(1).Padding(0, 16, 16, 16).Gap(6).Children(func() {
 				ui.Row(c).Justify(ui.End).Children(func() { a.bulkButton(c) })
 				if a.reqTab == 0 {
-					kvtable.EditorWith(c.Key("params-"+r.ID), &r.Params, kvtable.Options{KeyLabel: "参数", ValueLabel: "值", Ranges: a.ranges(c), Reorder: true, Bulk: &a.bulk})
+					if kvtable.EditorWith(c.Key("params-"+r.ID), &r.Params, kvtable.Options{KeyLabel: "参数", ValueLabel: "值", Ranges: a.ranges(c), Reorder: true, Bulk: &a.bulk}).Changed() {
+						r.URL = withQuery(r.URL, r.Params)
+						a.synced.url = r.URL
+					}
 				} else {
 					kvtable.EditorWith(c.Key("headers-"+r.ID), &r.Headers, kvtable.Options{
 						KeyLabel: "Header", ValueLabel: "值", Keys: headerNames, Values: headerValues, Ranges: a.ranges(c), Reorder: true, Bulk: &a.bulk,

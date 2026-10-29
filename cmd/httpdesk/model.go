@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io/fs"
 	"os"
+	"slices"
 	"strconv"
 	"sync/atomic"
 	"time"
@@ -83,8 +84,8 @@ func sampleWorkspace() *workspace {
 	post := newRequest("Echo JSON", "POST", "https://httpbin.org/post")
 	post.BodyType = bodyJSON
 	post.Body = "{\n  \"name\": \"MyGo\",\n  \"native\": true,\n  \"stars\": 42\n}"
-	get := newRequest("Query params", "GET", "https://httpbin.org/get")
-	get.Params = []kvtable.Pair{{On: true, Key: "lang", Value: "go"}, {On: true, Key: "page", Value: "1"}}
+	get := newRequest("Query params", "GET", "https://httpbin.org/get?lang=go&page=1")
+	get.Params = parse(get.URL, nil)
 	repo := newRequest("GitHub repo", "GET", "https://api.github.com/repos/egoist/mygo")
 	repo.Headers = []kvtable.Pair{{On: true, Key: "Accept", Value: "application/vnd.github+json"}}
 	col := &collection{ID: newID(), Name: "示例", Open: true, Requests: []*request{get, post, repo}}
@@ -102,6 +103,16 @@ func loadWorkspace(path string) (*workspace, error) {
 	ws := &workspace{}
 	if err := json.Unmarshal(data, ws); err != nil {
 		return nil, err
+	}
+	// Workspaces saved before Params followed the URL's query sent both,
+	// the query first.
+	for _, col := range ws.Collections {
+		for _, r := range col.Requests {
+			if !slices.Equal(enabled(parse(r.URL, nil)), enabled(r.Params)) {
+				r.Params = append(parse(r.URL, nil), r.Params...)
+				r.URL = withQuery(r.URL, r.Params)
+			}
+		}
 	}
 	return ws, nil
 }

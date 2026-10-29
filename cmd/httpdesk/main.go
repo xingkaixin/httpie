@@ -70,13 +70,14 @@ type app struct {
 	bulk           bool
 	bodyHL         highlighter
 
-	renaming   *collection
-	renameOpen bool
-	renameTo   string
-	deleting   *collection
-	deleteOpen bool
-	authOf     *collection
-	authOpen   bool
+	renaming    *string
+	renameTitle string
+	renameOpen  bool
+	renameTo    string
+	deleting    *collection
+	deleteOpen  bool
+	authOf      *collection
+	authOpen    bool
 
 	envOpen, envDeleteOpen bool
 	editing                string
@@ -210,7 +211,7 @@ func (a *app) sidebar(c *ui.Context) {
 	var action func()
 	ui.Column(c).Width(250).Padding(max(c.TitleBar().Height, 12), 0, 0, 0).Children(func() {
 		ui.Row(c).Padding(0, 10, 4, 18).Gap(2).AlignItems(ui.Center).DragWindow().Children(func() {
-			ui.Text(c, "Collections").FontSize(12).FontWeight(600).TextColor(t.TextMuted).Grow(1)
+			ui.Spacer(c)
 			iconButton(c, iconPlus, "新建请求 ⌘N").OnClick(func() { a.newRequest(nil) })
 			iconButton(c, iconFolderPlus, "新建集合").OnClick(a.newCollection)
 		})
@@ -225,9 +226,19 @@ func (a *app) sidebar(c *ui.Context) {
 								tag.TextColor(methodColor(t, r.Method))
 							}
 						}).ContextMenu(func(m *ui.Menu) {
+							if m.Item("重命名…").Chosen() {
+								action = func() { a.rename(&r.Name, "重命名请求") }
+							}
 							if m.Item("复制请求").Chosen() {
 								action = func() { a.duplicate(col, r) }
 							}
+							m.Submenu("移动到", func(sub *ui.Menu) {
+								for _, to := range a.ws.Collections {
+									if sub.Item(to.Name).Disabled(to == col).Chosen() {
+										action = func() { a.moveRequest(col, r, to) }
+									}
+								}
+							}).Disabled(len(a.ws.Collections) == 1)
 							m.Separator()
 							if m.Item("删除").Chosen() {
 								action = func() { a.deleteRequest(c, col, r) }
@@ -239,7 +250,7 @@ func (a *app) sidebar(c *ui.Context) {
 						action = func() { a.newRequest(col) }
 					}
 					if m.Item("重命名…").Chosen() {
-						action = func() { a.renaming, a.renameTo, a.renameOpen = col, col.Name, true }
+						action = func() { a.rename(&col.Name, "重命名集合") }
 					}
 					if m.Item("集合认证…").Chosen() {
 						action = func() { a.authOf, a.authOpen = col, true }
@@ -606,7 +617,16 @@ func (a *app) newRequest(col *collection) {
 func (a *app) newCollection() {
 	col := &collection{ID: newID(), Name: "新集合", Open: true, Auth: auth{AuthType: authNone}}
 	a.ws.Collections = append(a.ws.Collections, col)
-	a.renaming, a.renameTo, a.renameOpen = col, col.Name, true
+	a.rename(&col.Name, "重命名集合")
+}
+
+func (a *app) rename(name *string, title string) {
+	a.renaming, a.renameTitle, a.renameTo, a.renameOpen = name, title, *name, true
+}
+
+func (a *app) moveRequest(from *collection, r *request, to *collection) {
+	from.Requests = slices.DeleteFunc(from.Requests, func(x *request) bool { return x == r })
+	to.Requests, to.Open = append(to.Requests, r), true
 }
 
 func (a *app) duplicate(col *collection, r *request) {
@@ -667,12 +687,12 @@ func (a *app) dialogs(c *ui.Context) {
 	ui.Modal(c, &a.renameOpen, func() {
 		rename := func() {
 			if a.renameTo != "" {
-				a.renaming.Name = a.renameTo
+				*a.renaming = a.renameTo
 			}
 			a.renameOpen = false
 		}
 		ui.Column(c).Width(320).Gap(12).Children(func() {
-			ui.Text(c, "重命名集合").FontSize(15).Bold()
+			ui.Text(c, a.renameTitle).FontSize(15).Bold()
 			ui.TextInput(c, &a.renameTo).AutoFocus().OnSubmit(rename)
 			ui.Row(c).Gap(8).Justify(ui.End).Children(func() {
 				ui.Button(c, "取消").OnClick(func() { a.renameOpen = false })

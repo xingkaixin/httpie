@@ -14,6 +14,7 @@ import (
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
+	"github.com/egoist/mygo/ui/editor"
 	"github.com/xingkaixin/mygo-native-ui/ui/kvtable"
 	"github.com/xingkaixin/mygo-native-ui/ui/templatefield"
 )
@@ -65,7 +66,7 @@ type app struct {
 
 	reqTab, resTab int
 	bulk           bool
-	bodyHL, resHL  highlighter
+	bodyHL         highlighter
 
 	renaming   *collection
 	renameOpen bool
@@ -486,13 +487,26 @@ func (a *app) responsePane(c *ui.Context, r *request) {
 			if res.Truncated {
 				caption(c, "响应超过 10 MB，只显示前 10 MB").Padding(0, 16, 6, 16)
 			}
-			out := ui.TextAreaBase(c.Key("res-"+r.ID), &res.Body).ReadOnly(true).Label("响应 Body").
-				Font("monospace").FontSize(12.5).Grow(1).Padding(0, 16, 16, 16)
-			if res.JSON && len(res.Body) < 2<<20 {
-				out.TextRanges(a.resHL.ranges(t, res.Body)...)
-			}
+			editor.View(c.Key("res-"+r.ID), res.view).Grow(1).Margin(0, 16, 16, 16)
 		}
 	})
+}
+
+// bodyView returns a read-only editor of res's body.
+func bodyView(res *response) *editor.State {
+	buf := editor.NewBuffer(res.Body)
+	if res.JSON {
+		buf.SetLanguage(editor.LanguageFor("body.json"))
+	}
+	return &editor.State{
+		Buffer:          buf,
+		Font:            ui.Font{Size: 12.5},
+		ReadOnly:        true,
+		SoftWrap:        !res.JSON,
+		NoActiveLine:    true,
+		NoScrollPastEnd: true,
+		Label:           "响应 Body",
+	}
 }
 
 func (a *app) send() {
@@ -509,6 +523,7 @@ func (a *app) send() {
 	go func() {
 		res := send(ctx, args)
 		cancel()
+		res.view = bodyView(res)
 		a.win.Update(func() {
 			delete(a.inflight, id)
 			a.responses[id] = res

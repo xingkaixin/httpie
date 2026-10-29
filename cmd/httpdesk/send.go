@@ -14,6 +14,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/egoist/mygo/ui/editor"
+
 	"httpie/internal/core"
 )
 
@@ -36,6 +38,7 @@ type response struct {
 	Duration  time.Duration
 	Redirects []hop
 	Err       string
+	view      *editor.State
 }
 
 // sendFlags go with every request the app sends, but not into the command

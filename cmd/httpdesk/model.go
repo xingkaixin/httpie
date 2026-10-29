@@ -33,6 +33,9 @@ type request struct {
 	Follow   bool    `json:"follow,omitempty"`
 	Insecure bool    `json:"insecure,omitempty"`
 	Timeout  float64 `json:"timeout,omitempty"`
+	// Extract sets variables of the environment from the response, each
+	// key from the JSON path of its value.
+	Extract []kvtable.Pair `json:"extract,omitempty"`
 }
 
 type auth struct {

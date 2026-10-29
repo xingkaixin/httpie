@@ -94,6 +94,16 @@ func (e *environment) resolve(r *request) *request {
 	return &cp
 }
 
+// set gives the variable name value, turning it on, or adds it.
+func (e *environment) set(name, value string) {
+	i := slices.IndexFunc(e.Vars, func(v kvtable.Pair) bool { return v.Key == name })
+	if i < 0 {
+		e.Vars = append(e.Vars, kvtable.Pair{On: true, Key: name, Value: value, Kind: kindText})
+		return
+	}
+	e.Vars[i].On, e.Vars[i].Value = true, value
+}
+
 func (a *app) environment(id string) *environment {
 	i := slices.IndexFunc(a.ws.Environments, func(e *environment) bool { return e.ID == id })
 	if i < 0 {

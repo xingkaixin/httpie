@@ -66,6 +66,8 @@ type app struct {
 	url       ui.Handle
 	synced    struct{ id, url string }
 	curl      string
+	// notice is a toast for the next frame, from a goroutine's Update.
+	notice string
 
 	reqTab, resTab int
 	bulk           bool
@@ -198,6 +200,10 @@ func (a *app) view(c *ui.Context) {
 	}
 	if _, r := a.ws.find(a.ws.Selected); r != nil && c.Shortcut(ui.Cmd, ui.KeyL) {
 		a.url.Focus()
+	}
+	if a.notice != "" {
+		c.Toast(a.notice)
+		a.notice = ""
 	}
 
 	c.Root().Background(ui.Transparent)
@@ -502,13 +508,16 @@ func (a *app) bulkButton(c *ui.Context) {
 }
 
 func settingsEditor(c *ui.Context, r *request) {
-	ui.Column(c).Grow(1).Padding(0, 16, 16, 16).Gap(12).Children(func() {
+	ui.Scroll(c).Grow(1).Padding(0, 16, 16, 16).Gap(12).Children(func() {
 		ui.Checkbox(c, &r.Follow, "跟随重定向")
 		verify := !r.Insecure
 		if ui.Checkbox(c, &verify, "校验 TLS 证书").Changed() {
 			r.Insecure = !verify
 		}
 		ui.Field(c, "超时（秒，0 为不限）", func() { ui.NumberInput(c, &r.Timeout, 0, 3600, 1).Width(120) })
+		ui.Field(c, "2xx JSON 响应写入环境变量", func() {
+			kvtable.EditorWith(c.Key("extract-"+r.ID), &r.Extract, kvtable.Options{KeyLabel: "变量", ValueLabel: "JSON 路径，如 $.data.token"})
+		})
 	})
 }
 
@@ -628,6 +637,8 @@ func (a *app) send() {
 	a.inflight[r.ID] = cancel
 	req := a.env().resolve(col.effective(r))
 	id, args, jar := r.ID, requestArgs(req), a.ws.Cookies
+	// Variables go to the environment the request was sent with.
+	rules, envID := enabled(r.Extract), a.ws.Env
 	go func() {
 		res := send(ctx, append(systemProxy(req.URL), args...), jar)
 		cancel()
@@ -640,14 +651,39 @@ func (a *app) send() {
 		if res.Code != 0 {
 			saveResponse(a.resDir, id, res)
 		}
+		extracting := len(rules) > 0 && res.Code/100 == 2 && res.JSON && !res.Truncated
+		var vars []kvtable.Pair
+		var missing []string
+		if extracting {
+			vars, missing = extract(res.Body, rules)
+		}
 		a.win.Update(func() {
 			delete(a.inflight, id)
 			a.responses[id] = res
 			if res.Err == "" {
 				a.ws.Cookies = res.Cookies
 			}
+			if extracting {
+				a.setVars(envID, vars, missing)
+			}
 		})
 	}()
+}
+
+// setVars sets vars in the environment envID, telling of the paths a
+// response was missing.
+func (a *app) setVars(envID string, vars []kvtable.Pair, missing []string) {
+	env := a.environment(envID)
+	if env == nil {
+		a.notice = "未选择环境，提取的变量没有写入"
+		return
+	}
+	for _, v := range vars {
+		env.set(v.Key, v.Value)
+	}
+	if len(missing) > 0 {
+		a.notice = "响应中没有 " + strings.Join(missing, "、")
+	}
 }
 
 // loadResponse shows the response the request id had when the app last
@@ -711,7 +747,7 @@ func (a *app) moveRequest(from *collection, r *request, to *collection) {
 func (a *app) duplicate(col *collection, r *request) {
 	cp := *r
 	cp.ID, cp.Name = newID(), r.Name+" 副本"
-	cp.Params, cp.Headers, cp.Form = slices.Clone(r.Params), slices.Clone(r.Headers), slices.Clone(r.Form)
+	cp.Params, cp.Headers, cp.Form, cp.Extract = slices.Clone(r.Params), slices.Clone(r.Headers), slices.Clone(r.Form), slices.Clone(r.Extract)
 	i := slices.Index(col.Requests, r)
 	col.Requests = slices.Insert(col.Requests, i+1, &cp)
 	a.ws.Selected = cp.ID

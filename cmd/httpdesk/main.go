@@ -616,10 +616,11 @@ func main() {
 		})
 		go func() {
 			for range time.Tick(time.Second) {
-				a.win.Update(a.saveIfChanged)
+				mygo.RunOnMain(a.saveIfChanged)
 			}
 		}()
 	})
+	mygo.App.OnBeforeQuit(func(*mygo.QuitEvent) { a.saveIfChanged() })
 	if err := mygo.App.Run(); err != nil {
 		log.Fatal(err)
 	}

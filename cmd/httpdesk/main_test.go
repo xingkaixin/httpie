@@ -35,7 +35,7 @@ func TestRequestArgs(t *testing.T) {
 	r := newRequest("t", "PUT", "example.org")
 	r.Headers = []kvtable.Pair{{On: true, Key: "X-Empty"}, {On: true, Key: "-a:b", Value: "v"}}
 	r.BodyType, r.Body = bodyText, "hi"
-	want := []string{"--raw=hi", "--", "PUT", "example.org", "X-Empty;", `-a\:b:v`, "Content-Type:text/plain; charset=utf-8"}
+	want := []string{"--follow", "--raw=hi", "--", "PUT", "example.org", "X-Empty;", `-a\:b:v`, "Content-Type:text/plain; charset=utf-8"}
 	if got := requestArgs(r); !slices.Equal(got, want) {
 		t.Errorf("args %q, want %q", got, want)
 	}

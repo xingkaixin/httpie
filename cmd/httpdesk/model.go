@@ -75,7 +75,7 @@ func newID() string {
 }
 
 func newRequest(name, method, url string) *request {
-	return &request{ID: newID(), Name: name, Method: method, URL: url, BodyType: bodyNone, AuthType: authNone}
+	return &request{ID: newID(), Name: name, Method: method, URL: url, BodyType: bodyNone, AuthType: authNone, Follow: true}
 }
 
 func sampleWorkspace() *workspace {

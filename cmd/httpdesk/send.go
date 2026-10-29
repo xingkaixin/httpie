@@ -60,10 +60,11 @@ var sendFlags = []string{"--all", "--pretty=format", "--unsorted", "--format-opt
 
 var hasScheme = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9+.-]*://`)
 
-// systemProxy returns the option sending a request for rawURL through the
+// systemProxy returns the options sending a request for rawURL through the
 // system's proxy, as browsers do: core reads proxies only from the
-// environment, which has none for an app opened from the Dock. It may
-// block while the system runs a PAC file.
+// environment, which has none for an app opened from the Dock. Both
+// schemes get one, as a redirect followed may change it. It may block
+// while the system runs a PAC file.
 func systemProxy(rawURL string) []string {
 	// The URL is completed as core does, or ":3000" would be looked up
 	// as no host rather than localhost, which goes direct.
@@ -78,11 +79,15 @@ func systemProxy(rawURL string) []string {
 	if err != nil {
 		return nil
 	}
-	proxy, err := netproxy.Proxy(&http.Request{URL: u})
-	if err != nil || proxy == nil {
-		return nil
+	var opts []string
+	for _, scheme := range []string{"http", "https"} {
+		v := *u
+		v.Scheme = scheme
+		if proxy, err := netproxy.Proxy(&http.Request{URL: &v}); err == nil && proxy != nil {
+			opts = append(opts, "--proxy="+scheme+":"+proxy.String())
+		}
 	}
-	return []string{"--proxy=" + u.Scheme + ":" + proxy.String()}
+	return opts
 }
 
 // keySeparators are what parseItem splits an item at, which a key escapes.

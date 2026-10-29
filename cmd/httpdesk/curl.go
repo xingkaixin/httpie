@@ -33,6 +33,7 @@ func parseCurl(cmd string) (*request, error) {
 	}
 	r := newRequest("", "", "")
 	r.Follow = false
+	r.AuthType = authNone
 	header := func(k, v string) { r.Headers = append(r.Headers, kvtable.Pair{On: true, Key: k, Value: v}) }
 	var method, user, data, file string
 	var sent, asJSON, head, digest bool

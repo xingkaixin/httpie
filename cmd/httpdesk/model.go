@@ -4,9 +4,12 @@ import (
 	"encoding/json"
 	"errors"
 	"io/fs"
+	"log"
 	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -131,6 +134,42 @@ func loadWorkspace(path string) (*workspace, error) {
 		}
 	}
 	return ws, nil
+}
+
+// saveResponse keeps res in dir as the last response of the request id,
+// apart from the workspace, which is saved each second.
+func saveResponse(dir, id string, res *response) {
+	data, err := json.Marshal(res)
+	if err == nil {
+		err = os.MkdirAll(dir, 0o700)
+	}
+	if err == nil {
+		// It has the request as sent, credentials and all.
+		err = os.WriteFile(filepath.Join(dir, id+".json"), data, 0o600)
+	}
+	if err != nil {
+		log.Printf("save response: %v", err)
+	}
+}
+
+func readResponse(dir, id string) *response {
+	data, err := os.ReadFile(filepath.Join(dir, id+".json"))
+	res := &response{}
+	if err != nil || json.Unmarshal(data, res) != nil {
+		return nil
+	}
+	return res
+}
+
+// pruneResponses removes from dir the responses of requests ws no longer
+// has. It runs at start, as deleting a request can be undone.
+func pruneResponses(dir string, ws *workspace) {
+	entries, _ := os.ReadDir(dir)
+	for _, e := range entries {
+		if _, r := ws.find(strings.TrimSuffix(e.Name(), ".json")); r == nil {
+			os.Remove(filepath.Join(dir, e.Name()))
+		}
+	}
 }
 
 func (ws *workspace) find(id string) (*collection, *request) {

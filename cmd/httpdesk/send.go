@@ -40,8 +40,9 @@ type response struct {
 	Duration  time.Duration
 	Redirects []hop
 	Sent      string
-	Cookies   []core.Cookie
+	Cookies   []core.Cookie `json:"-"`
 	Err       string
+	At        time.Time
 	view      *editor.State
 	sentView  *editor.State
 }
@@ -193,11 +194,11 @@ func (rec *recorder) Response(r *http.Response, headers []core.Header, _ time.Ti
 }
 
 // send sends the request of args with the cookies of jar; the response has
-// the jar as the exchange left it.
+// the jar as the exchange left it. It returns nil once ctx is canceled.
 func send(ctx context.Context, args []string, jar []core.Cookie) *response {
 	res, err := exchange(ctx, args, jar)
 	if ctx.Err() != nil {
-		return &response{Err: "已取消"}
+		return nil
 	}
 	if err != nil {
 		return &response{Err: err.Error()}
@@ -253,6 +254,7 @@ func exchange(ctx context.Context, args []string, jar []core.Cookie) (*response,
 		Redirects: rec.hops[:len(rec.hops)-1],
 		Sent:      strings.Join(rec.sent, "\n\n"),
 		Cookies:   ex.Cookies(),
+		At:        start,
 	}
 	if decodeErr != nil {
 		res.Body = decodeErr.Error()
@@ -291,6 +293,20 @@ func displayBody(o core.Options, resp *http.Response, headers []core.Header, pla
 	}
 	text := strings.TrimRight(out.String(), "\n")
 	return text, json.Valid([]byte(text))
+}
+
+// ago tells how long ago t was, if a minute or more.
+func ago(t time.Time) string {
+	d := time.Since(t)
+	switch {
+	case d < time.Minute:
+		return ""
+	case d < time.Hour:
+		return fmt.Sprintf("%d 分钟前", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%d 小时前", int(d.Hours()))
+	}
+	return t.Format("1月2日 15:04")
 }
 
 func formatSize(n int) string {

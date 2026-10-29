@@ -58,6 +58,7 @@ func statusColor(code int) ui.Color {
 type app struct {
 	win       *mygo.Window
 	path      string
+	resDir    string
 	saved     []byte
 	ws        *workspace
 	responses map[string]*response
@@ -354,7 +355,10 @@ func (a *app) urlBar(c *ui.Context, r *request) {
 		templatefield.Input(c.Key("url-"+r.ID), &r.URL, a.env()).Bind(&a.url).Placeholder("httpbin.org/get，或 :3000/api").Label("URL").
 			Font("monospace").Grow(1).Padding(6, 4).OnSubmit(a.send).OnPaste(a.pasteCurl)
 		if sending {
-			ui.Button(c, "取消").OnClick(func() { a.inflight[r.ID]() })
+			if ui.Button(c, "取消").Clicked() {
+				a.inflight[r.ID]()
+				c.Toast("已取消")
+			}
 		} else {
 			ui.PrimaryButton(c, "").Label("Send").Tooltip("发送 ⌘↩").OnClick(a.send).Children(func() {
 				ui.Text(c, "Send").SingleLine()
@@ -510,7 +514,10 @@ func settingsEditor(c *ui.Context, r *request) {
 
 func (a *app) responsePane(c *ui.Context, r *request) {
 	t := c.Theme()
-	res := a.responses[r.ID]
+	res, loaded := a.responses[r.ID]
+	if !loaded {
+		a.loadResponse(r.ID)
+	}
 	_, sending := a.inflight[r.ID]
 	ui.Column(c).Fill().Children(func() {
 		ui.Row(c).Padding(10, 16).Gap(10).AlignItems(ui.Center).Children(func() {
@@ -529,6 +536,9 @@ func (a *app) responsePane(c *ui.Context, r *request) {
 			})
 			caption(c, res.Duration.Round(time.Millisecond).String()).FontFeatures("tnum").SingleLine().Shrink(0)
 			caption(c, formatSize(res.Size)).SingleLine().Shrink(0)
+			if at := ago(res.At); at != "" {
+				caption(c, at).Tooltip(res.At.Format("2006-01-02 15:04:05")).SingleLine().Shrink(0)
+			}
 			if iconButton(c, iconCopy, "复制响应").Shrink(0).Clicked() {
 				c.WriteClipboard(res.Body)
 				c.Toast("已复制响应内容")
@@ -582,6 +592,13 @@ func (a *app) responsePane(c *ui.Context, r *request) {
 	})
 }
 
+// buildViews makes the editors showing res, which take long for a large
+// body, off the main thread.
+func (res *response) buildViews() {
+	res.view = textView(res.Body, "响应 Body", res.JSON)
+	res.sentView = textView(res.Sent, "实际发出的请求", false)
+}
+
 // textView returns a read-only editor of text.
 func textView(text, label string, isJSON bool) *editor.State {
 	buf := editor.NewBuffer(text)
@@ -614,13 +631,38 @@ func (a *app) send() {
 	go func() {
 		res := send(ctx, append(systemProxy(req.URL), args...), jar)
 		cancel()
-		res.view = textView(res.Body, "响应 Body", res.JSON)
-		res.sentView = textView(res.Sent, "实际发出的请求", false)
+		if res == nil {
+			// A canceled request keeps the response it had.
+			a.win.Update(func() { delete(a.inflight, id) })
+			return
+		}
+		res.buildViews()
+		if res.Code != 0 {
+			saveResponse(a.resDir, id, res)
+		}
 		a.win.Update(func() {
 			delete(a.inflight, id)
 			a.responses[id] = res
 			if res.Err == "" {
 				a.ws.Cookies = res.Cookies
+			}
+		})
+	}()
+}
+
+// loadResponse shows the response the request id had when the app last
+// ran, unless a send's comes first.
+func (a *app) loadResponse(id string) {
+	a.responses[id] = nil
+	go func() {
+		res := readResponse(a.resDir, id)
+		if res == nil {
+			return
+		}
+		res.buildViews()
+		a.win.Update(func() {
+			if a.responses[id] == nil {
+				a.responses[id] = res
 			}
 		})
 	}()
@@ -766,8 +808,10 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	resDir := filepath.Join(dir, "responses")
+	pruneResponses(resDir, ws)
 	a := &app{
-		path: path, ws: ws,
+		path: path, resDir: resDir, ws: ws,
 		responses: map[string]*response{},
 		inflight:  map[string]context.CancelFunc{},
 	}

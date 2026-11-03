@@ -29,12 +29,18 @@ static SSL_CTX *httpie_context(int verify, int protocol, const char *ciphers,
     if (!SSL_CTX_set_min_proto_version(ctx, protocol ? protocol : TLS1_2_VERSION)) goto failed;
     if (protocol && !SSL_CTX_set_max_proto_version(ctx, protocol)) goto failed;
     if (ciphers && *ciphers && !SSL_CTX_set_cipher_list(ctx, ciphers)) goto failed;
-    if (verify && !SSL_CTX_set_default_verify_paths(ctx)) goto failed;
     return ctx;
 failed:
     httpie_error(error, error_length);
     if (ctx) SSL_CTX_free(ctx);
     return NULL;
+}
+
+static int httpie_default_trust(SSL_CTX *ctx, char *error, size_t length) {
+    ERR_clear_error();
+    int ok = SSL_CTX_set_default_verify_paths(ctx);
+    if (!ok) httpie_error(error, length);
+    return ok;
 }
 
 static int httpie_trust(SSL_CTX *ctx, const char *file, const char *directory, char *error, size_t length) {
@@ -123,8 +129,9 @@ import (
 )
 
 type tlsSettings struct {
-	context *C.SSL_CTX
-	options Options
+	context    *C.SSL_CTX
+	options    Options
+	configured bool
 }
 
 func newTLSSettings(o Options) (*tlsSettings, error) {
@@ -155,7 +162,15 @@ func newTLSSettings(o Options) (*tlsSettings, error) {
 	}
 	return &tlsSettings{context: ctx, options: o}, nil
 }
+
+// configure loads the trust store and client certificate into the shared
+// context, once, at the first handshake: plain HTTP and --offline then
+// skip reading the system's CA bundle, and an encrypted key's password is
+// asked once however many hosts are reached.
 func (settings *tlsSettings) configure() error {
+	if settings.configured {
+		return nil
+	}
 	o := settings.options
 	ctx := settings.context
 	var message [256]C.char
@@ -163,6 +178,9 @@ func (settings *tlsSettings) configure() error {
 	check := verify != "no" && verify != "false"
 	caFile, caDir := "", ""
 	if check {
+		if C.httpie_default_trust(ctx, &message[0], C.size_t(len(message))) != 1 {
+			return fmt.Errorf("OpenSSL: %s", C.GoString(&message[0]))
+		}
 		if verify == "yes" || verify == "true" {
 			caFile = os.Getenv("REQUESTS_CA_BUNDLE")
 			if caFile == "" {
@@ -216,6 +234,7 @@ func (settings *tlsSettings) configure() error {
 			return fmt.Errorf("OpenSSL: %s", C.GoString(&message[0]))
 		}
 	}
+	settings.configured = true
 	return nil
 }
 func (s *tlsSettings) close() {

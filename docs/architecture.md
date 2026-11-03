@@ -33,7 +33,7 @@
 
 TLS 交给 OpenSSL。Go 标准库不能覆盖原版支持的全部 cipher 表达式、套件和 security level，因此使用 Cgo 与内存 BIO 连接 Go 网络流。HTTP/HTTPS/SOCKS 代理和超时仍由 Go 管理。构建需要 C 编译器、pkg-config 和 OpenSSL 开发文件，运行需要对应动态库；不支持 `CGO_ENABLED=0` 构建。
 
-默认使用 OpenSSL 的信任库。`--verify`、`REQUESTS_CA_BUNDLE`、`CURL_CA_BUNDLE` 可指定信任来源。不同机器上的 CA 库、可用协议和默认密码套件由 OpenSSL 安装决定。只有建立 TLS 连接时才读取自定义 CA 和加载客户端证书。
+默认使用 OpenSSL 的信任库。`--verify`、`REQUESTS_CA_BUNDLE`、`CURL_CA_BUNDLE` 可指定信任来源。不同机器上的 CA 库、可用协议和默认密码套件由 OpenSSL 安装决定。信任库（含默认 CA 与自定义 CA）和客户端证书在首次建立 TLS 连接时加载，一次运行只加载一次；HTTP 请求和 `--offline` 不读取它们。
 
 ## I/O 与状态
 

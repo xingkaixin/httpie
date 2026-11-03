@@ -63,8 +63,8 @@ var hasScheme = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9+.-]*://`)
 // systemProxy returns the options sending a request for rawURL through the
 // system's proxy, as browsers do: core reads proxies only from the
 // environment, which has none for an app opened from the Dock. Both
-// schemes get one, as a redirect followed may change it. It may block
-// while the system runs a PAC file.
+// schemes get one, as a redirect followed may change it. Each lookup may
+// block while the system runs a PAC file, so the two run at once.
 func systemProxy(rawURL string) []string {
 	// The URL is completed as core does, or ":3000" would be looked up
 	// as no host rather than localhost, which goes direct.
@@ -79,15 +79,20 @@ func systemProxy(rawURL string) []string {
 	if err != nil {
 		return nil
 	}
-	var opts []string
-	for _, scheme := range []string{"http", "https"} {
+	schemes := []string{"http", "https"}
+	opts := make([]string, len(schemes))
+	var wg sync.WaitGroup
+	for i, scheme := range schemes {
 		v := *u
 		v.Scheme = scheme
-		if proxy, err := netproxy.Proxy(&http.Request{URL: &v}); err == nil && proxy != nil {
-			opts = append(opts, "--proxy="+scheme+":"+proxy.String())
-		}
+		wg.Go(func() {
+			if proxy, err := netproxy.Proxy(&http.Request{URL: &v}); err == nil && proxy != nil {
+				opts[i] = "--proxy=" + scheme + ":" + proxy.String()
+			}
+		})
 	}
-	return opts
+	wg.Wait()
+	return slices.DeleteFunc(opts, func(o string) bool { return o == "" })
 }
 
 // keySeparators are what parseItem splits an item at, which a key escapes.

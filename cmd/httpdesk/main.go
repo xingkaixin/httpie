@@ -694,9 +694,6 @@ func (a *app) send() {
 		if !streamed {
 			res.buildViews()
 		}
-		if res.Code != 0 {
-			saveResponse(a.resDir, id, res)
-		}
 		extracting := len(rules) > 0 && res.Code/100 == 2 && res.JSON && !res.Truncated
 		var vars []kvtable.Pair
 		var missing []string
@@ -713,6 +710,10 @@ func (a *app) send() {
 				a.setVars(envID, vars, missing)
 			}
 		})
+		// Saved once shown: a large body takes tens of milliseconds to write.
+		if res.Code != 0 {
+			saveResponse(a.resDir, id, res)
+		}
 	}()
 }
 

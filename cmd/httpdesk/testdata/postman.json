@@ -1,0 +1,52 @@
+{
+  "info": {"name": "Shop", "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"},
+  "auth": {"type": "bearer", "bearer": [{"key": "token", "value": "{{token}}", "type": "string"}]},
+  "variable": [{"key": "base", "value": "https://api.example.com"}, {"key": "old", "value": "1", "disabled": true}],
+  "item": [
+    {
+      "name": "Users",
+      "auth": {"type": "basic", "basic": {"username": "kev", "password": "pw"}},
+      "item": [
+        {
+          "name": "Get user",
+          "request": {
+            "method": "get",
+            "header": [{"key": "Accept", "value": "application/json"}, {"key": "X-Off", "value": "1", "disabled": true}],
+            "url": {
+              "raw": "{{base}}/users/:id?expand=1",
+              "query": [{"key": "expand", "value": "1"}, {"key": "debug", "value": "true", "disabled": true}],
+              "variable": [{"key": "id", "value": "42"}]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Create order",
+      "request": {
+        "method": "POST",
+        "auth": {"type": "apikey", "apikey": [{"key": "key", "value": "X-Key"}, {"key": "value", "value": "s3"}, {"key": "in", "value": "query"}]},
+        "url": "{{base}}/orders",
+        "body": {"mode": "raw", "raw": "{\"n\": 1}", "options": {"raw": {"language": "json"}}}
+      }
+    },
+    {
+      "name": "Upload",
+      "request": {
+        "method": "POST",
+        "auth": {"type": "oauth2", "oauth2": []},
+        "url": "{{base}}/files",
+        "body": {"mode": "formdata", "formdata": [{"key": "note", "value": "hi", "type": "text"}, {"key": "doc", "src": ["/tmp/a.pdf"], "type": "file"}]}
+      }
+    },
+    {
+      "name": "Login",
+      "request": {
+        "method": "POST",
+        "auth": {"type": "noauth"},
+        "url": "{{base}}/login",
+        "body": {"mode": "urlencoded", "urlencoded": [{"key": "user", "value": "kev"}]}
+      }
+    }
+  ]
+}

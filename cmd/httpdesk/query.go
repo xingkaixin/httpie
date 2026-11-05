@@ -2,6 +2,8 @@ package main
 
 import (
 	"net/url"
+	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/xingkaixin/mygo-native-ui/ui/kvtable"
@@ -77,4 +79,51 @@ func withQuery(raw string, pairs []kvtable.Pair) string {
 func escape(s string) string {
 	e := url.QueryEscape(s)
 	return strings.NewReplacer("%7B", "{", "%7D", "}").Replace(e)
+}
+
+// pathVar is a variable of a URL's path, as :id in /users/:id.
+var pathVar = regexp.MustCompile(`/:([A-Za-z_][\w-]*)`)
+
+// pathSpan returns where the path of raw is: after its host, which may
+// have a port, up to its query or fragment.
+func pathSpan(raw string) (start, end int) {
+	base, _, _ := split(raw)
+	host := 0
+	if i := strings.Index(base, "://"); i >= 0 {
+		host = i + 3
+	}
+	i := strings.IndexByte(base[host:], '/')
+	if i < 0 {
+		return len(base), len(base)
+	}
+	return host + i, len(base)
+}
+
+// pathVars returns the variables of raw's path, with the values old has
+// for them.
+func pathVars(raw string, old []kvtable.Pair) []kvtable.Pair {
+	start, end := pathSpan(raw)
+	var vars []kvtable.Pair
+	for _, m := range pathVar.FindAllStringSubmatch(raw[start:end], -1) {
+		v := kvtable.Pair{On: true, Key: m[1]}
+		if i := slices.IndexFunc(old, func(o kvtable.Pair) bool { return o.Key == v.Key }); i >= 0 {
+			v.Value = old[i].Value
+		}
+		vars = append(vars, v)
+	}
+	return vars
+}
+
+// fillPath returns raw with the variables of its path that vars give a
+// value replaced by it, escaped.
+func fillPath(raw string, vars []kvtable.Pair) string {
+	start, end := pathSpan(raw)
+	path := pathVar.ReplaceAllStringFunc(raw[start:end], func(m string) string {
+		i := slices.IndexFunc(vars, func(v kvtable.Pair) bool { return v.Key == m[2:] })
+		if i < 0 || vars[i].Value == "" {
+			return m
+		}
+		return "/" + url.PathEscape(vars[i].Value)
+	})
+	return raw[:start] + path + raw[end:]
 }

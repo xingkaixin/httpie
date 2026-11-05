@@ -98,3 +98,16 @@ func TestJSONTokens(t *testing.T) {
 		}
 	}
 }
+
+func TestPathVars(t *testing.T) {
+	for _, tc := range []struct{ url, want string }{
+		{"https://example.org:8443/users/:id/posts/:post_id?x=:id", "https://example.org:8443/users/a%2Fb/posts/:post_id?x=:id"},
+		{":3000/users/:id", ":3000/users/a%2Fb"},
+		{"{{base}}/users/:id.json", "{{base}}/users/a%2Fb.json"},
+	} {
+		vars := pathVars(tc.url, []kvtable.Pair{{Key: "id", Value: "a/b"}})
+		if got := fillPath(tc.url, vars); got != tc.want {
+			t.Errorf("%s: %s, want %s", tc.url, got, tc.want)
+		}
+	}
+}

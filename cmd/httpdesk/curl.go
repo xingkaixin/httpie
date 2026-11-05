@@ -134,7 +134,7 @@ func parseCurl(cmd string) (*request, error) {
 	if r.URL == "" {
 		return nil, errors.New("没有 URL")
 	}
-	r.Params = parse(r.URL, nil)
+	r.Params, r.PathVars = parse(r.URL, nil), pathVars(r.URL, nil)
 
 	if asJSON {
 		for _, h := range [][2]string{{"Content-Type", "application/json"}, {"Accept", "application/json"}} {

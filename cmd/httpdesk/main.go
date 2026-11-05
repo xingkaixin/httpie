@@ -390,6 +390,9 @@ func (a *app) urlBar(c *ui.Context, r *request) {
 		r.Params = parse(r.URL, r.Params)
 	}
 	a.synced.id, a.synced.url = r.ID, r.URL
+	if vars := pathVars(r.URL, r.PathVars); !slices.Equal(vars, r.PathVars) {
+		r.PathVars = vars
+	}
 }
 
 func (a *app) requestPane(c *ui.Context, col *collection, r *request) {
@@ -413,6 +416,7 @@ func (a *app) requestPane(c *ui.Context, col *collection, r *request) {
 						r.URL = withQuery(r.URL, r.Params)
 						a.synced.url = r.URL
 					}
+					a.pathVarsEditor(c, r)
 				} else {
 					kvtable.EditorWith(c.Key("headers-"+r.ID), &r.Headers, kvtable.Options{
 						KeyLabel: "Header", ValueLabel: "值", Keys: headerNames, Values: headerValues, Ranges: a.ranges(c), Reorder: true, Bulk: &a.bulk,
@@ -427,6 +431,22 @@ func (a *app) requestPane(c *ui.Context, col *collection, r *request) {
 			settingsEditor(c, r)
 		}
 	})
+}
+
+// pathVarsEditor edits the values of the variables of r's path, which
+// the URL names.
+func (a *app) pathVarsEditor(c *ui.Context, r *request) {
+	if len(r.PathVars) == 0 {
+		return
+	}
+	caption(c, "路径变量").Margin(10, 0, 2, 0)
+	for i := range r.PathVars {
+		v := &r.PathVars[i]
+		ui.Row(c.Key("path-" + r.ID + v.Key)).Gap(8).AlignItems(ui.Center).Children(func() {
+			ui.Text(c, ":"+v.Key).Font("monospace").FontSize(12).Width(140).Shrink(0)
+			a.varInput(c, &v.Value).Font("monospace").Grow(1)
+		})
+	}
 }
 
 func (a *app) bodyEditor(c *ui.Context, r *request) {
@@ -848,7 +868,7 @@ func (a *app) moveRequest(from *collection, r *request, to *collection) {
 func (a *app) duplicate(col *collection, r *request) {
 	cp := *r
 	cp.ID, cp.Name = newID(), r.Name+" 副本"
-	cp.Params, cp.Headers, cp.Form, cp.Extract = slices.Clone(r.Params), slices.Clone(r.Headers), slices.Clone(r.Form), slices.Clone(r.Extract)
+	cp.Params, cp.PathVars, cp.Headers, cp.Form, cp.Extract = slices.Clone(r.Params), slices.Clone(r.PathVars), slices.Clone(r.Headers), slices.Clone(r.Form), slices.Clone(r.Extract)
 	i := slices.Index(col.Requests, r)
 	col.Requests = slices.Insert(col.Requests, i+1, &cp)
 	a.ws.Selected = cp.ID

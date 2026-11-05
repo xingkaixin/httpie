@@ -21,6 +21,7 @@ type request struct {
 	Method   string         `json:"method"`
 	URL      string         `json:"url"`
 	Params   []kvtable.Pair `json:"params,omitempty"`
+	PathVars []kvtable.Pair `json:"pathVars,omitempty"`
 	Headers  []kvtable.Pair `json:"headers,omitempty"`
 	BodyType string         `json:"bodyType"`
 	Body     string         `json:"body,omitempty"`

@@ -4,12 +4,14 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/base64"
 	"fmt"
 	"io"
 	"math"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"os"
 	"strconv"
@@ -222,7 +224,7 @@ func (t *transport) connect(ctx context.Context, u, proxyURL *url.URL) error {
 	stop := context.AfterFunc(ctx, func() { _ = raw.Close() })
 	closeOnError := func(err error) error { stop(); conn.Close(); return err }
 	if proxyURL != nil && proxyURL.Scheme == "https" {
-		secured, err := t.tls.connect(ctx, conn, proxyURL.Hostname())
+		secured, err := t.handshake(ctx, conn, proxyURL.Hostname())
 		if err != nil {
 			return closeOnError(err)
 		}
@@ -246,7 +248,7 @@ func (t *transport) connect(ctx context.Context, u, proxyURL *url.URL) error {
 		}
 	}
 	if u.Scheme == "https" {
-		secured, err := t.tls.connect(ctx, conn, u.Hostname())
+		secured, err := t.handshake(ctx, conn, u.Hostname())
 		if err != nil {
 			return closeOnError(err)
 		}
@@ -258,6 +260,22 @@ func (t *transport) connect(ctx context.Context, u, proxyURL *url.URL) error {
 	t.target = target
 	return nil
 }
+
+// handshake secures conn to host, telling the trace of ctx, as the
+// desktop app's, which times requests. The dialer tells it of the DNS
+// lookup and the connection.
+func (t *transport) handshake(ctx context.Context, conn net.Conn, host string) (net.Conn, error) {
+	trace := httptrace.ContextClientTrace(ctx)
+	if trace != nil && trace.TLSHandshakeStart != nil {
+		trace.TLSHandshakeStart()
+	}
+	secured, err := t.tls.connect(ctx, conn, host)
+	if trace != nil && trace.TLSHandshakeDone != nil {
+		trace.TLSHandshakeDone(tls.ConnectionState{}, err)
+	}
+	return secured, err
+}
+
 func (t *transport) send(ctx context.Context, r *Request) (*http.Response, []Header, error) {
 	p, err := t.proxyFor(r.URL)
 	if err != nil {
@@ -350,6 +368,14 @@ func (t *transport) send(ctx context.Context, r *Request) (*http.Response, []Hea
 	}
 	if err = w.Flush(); err != nil {
 		return nil, nil, err
+	}
+	if trace := httptrace.ContextClientTrace(ctx); trace != nil {
+		if trace.WroteRequest != nil {
+			trace.WroteRequest(httptrace.WroteRequestInfo{})
+		}
+		if _, err := t.reader.Peek(1); err == nil && trace.GotFirstResponseByte != nil {
+			trace.GotFirstResponseByte()
+		}
 	}
 	for {
 		var raw bytes.Buffer

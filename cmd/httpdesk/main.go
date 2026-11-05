@@ -247,8 +247,9 @@ func (a *app) view(c *ui.Context) {
 func (a *app) sidebar(c *ui.Context) {
 	t := c.Theme()
 	var action func()
-	ui.Column(c).Width(250).Padding(max(c.TitleBar().Height, 12), 0, 0, 0).Children(func() {
-		ui.Row(c).Padding(0, 10, 4, 18).Gap(2).AlignItems(ui.Center).DragWindow().Children(func() {
+	bar := c.TitleBar()
+	ui.Column(c).Width(250).Children(func() {
+		ui.Row(c).Height(max(bar.Height, 44)).Padding(0, 10, 0, bar.Left).Gap(2).AlignItems(ui.Center).DragWindow().Children(func() {
 			ui.Spacer(c)
 			iconButton(c, iconPlus, "新建请求 ⌘N").OnClick(func() { a.newRequest(nil) })
 			iconButton(c, iconFolderPlus, "新建集合").OnClick(a.newCollection)
@@ -909,8 +910,11 @@ func main() {
 			MinHeight:     560,
 			StateKey:      "main",
 			TitleBarStyle: mygo.TitleBarHiddenInset,
-			Vibrancy:      mygo.VibrancySidebar,
-			Content:       ui.View(a.view),
+			// Placed, the traffic lights get as much room below them as
+			// above, so the rows of the title bar center on them.
+			TrafficLightPosition: &mygo.Point{X: 18, Y: 18},
+			Vibrancy:             mygo.VibrancySidebar,
+			Content:              ui.View(a.view),
 		})
 		go func() {
 			for range time.Tick(time.Second) {

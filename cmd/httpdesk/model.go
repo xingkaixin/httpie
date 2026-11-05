@@ -51,8 +51,12 @@ type collection struct {
 	Name string `json:"name"`
 	Open bool   `json:"open"`
 	// Auth is that of the requests inheriting it.
-	Auth     auth       `json:"auth"`
-	Requests []*request `json:"requests"`
+	Auth auth `json:"auth"`
+	// Headers go with each request, unless it has one of the same name,
+	// even off. Vars are below those of the environment.
+	Headers  []kvtable.Pair `json:"headers,omitempty"`
+	Vars     []kvtable.Pair `json:"vars,omitempty"`
+	Requests []*request     `json:"requests"`
 }
 
 type workspace struct {
@@ -157,14 +161,26 @@ func (ws *workspace) find(id string) (*collection, *request) {
 	return nil, nil
 }
 
-// effective returns r as sent, with col's auth where r inherits it.
+// effective returns r as sent, with col's auth where r inherits it, and
+// the headers of col r does not name.
 func (col *collection) effective(r *request) *request {
-	if r.AuthType != authInherit {
-		return r
-	}
 	cp := *r
-	cp.auth = col.Auth
+	if r.AuthType == authInherit {
+		cp.auth = col.Auth
+	}
+	cp.Headers = append(col.inherited(r), r.Headers...)
 	return &cp
+}
+
+// inherited returns the headers of col that go with r.
+func (col *collection) inherited(r *request) []kvtable.Pair {
+	var out []kvtable.Pair
+	for _, h := range enabled(col.Headers) {
+		if headerIndex(r.Headers, h.Key) < 0 {
+			out = append(out, h)
+		}
+	}
+	return out
 }
 
 func enabled(rows []kvtable.Pair) []kvtable.Pair {

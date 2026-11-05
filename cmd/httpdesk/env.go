@@ -36,65 +36,97 @@ type environment struct {
 	Vars []kvtable.Pair `json:"vars,omitempty"`
 }
 
-// Names, Lookup and fill take a nil environment, as no environment chosen,
-// which defines only the dynamic variables.
-func (e *environment) Names() []string {
+// scope is what defines the variables of a request: its environment,
+// then its collection, either of which may be nil.
+type scope struct {
+	env *environment
+	col *collection
+}
+
+func (s scope) Names() []string {
 	var names []string
-	if e != nil {
-		for _, v := range enabled(e.Vars) {
-			names = append(names, v.Key)
+	for _, vars := range [][]kvtable.Pair{s.envVars(), s.colVars()} {
+		for _, v := range enabled(vars) {
+			if !slices.Contains(names, v.Key) {
+				names = append(names, v.Key)
+			}
 		}
 	}
 	return append(names, slices.Sorted(maps.Keys(dynamic))...)
 }
 
-func (e *environment) Lookup(name string) (value, source string, secret, ok bool) {
+func (s scope) Lookup(name string) (value, source string, secret, ok bool) {
 	// templatefield looks values up each frame, so a dynamic one is made
 	// only by fill.
 	if _, ok := dynamic[name]; ok {
 		return "发送时生成", "内置", false, true
 	}
-	if e == nil {
-		return "", "", false, false
+	if v, ok := lookupVar(s.envVars(), name); ok {
+		return v.Value, s.env.Name, v.Kind == kindSecret, true
 	}
-	vars := enabled(e.Vars)
-	if i := slices.IndexFunc(vars, func(v kvtable.Pair) bool { return v.Key == name }); i >= 0 {
-		return vars[i].Value, e.Name, vars[i].Kind == kindSecret, true
+	if v, ok := lookupVar(s.colVars(), name); ok {
+		return v.Value, "集合 " + s.col.Name, v.Kind == kindSecret, true
 	}
 	return "", "", false, false
 }
 
-func (e *environment) fill(s string) string {
-	return variable.ReplaceAllStringFunc(s, func(m string) string {
+func (s scope) envVars() []kvtable.Pair {
+	if s.env == nil {
+		return nil
+	}
+	return s.env.Vars
+}
+
+func (s scope) colVars() []kvtable.Pair {
+	if s.col == nil {
+		return nil
+	}
+	return s.col.Vars
+}
+
+func lookupVar(vars []kvtable.Pair, name string) (kvtable.Pair, bool) {
+	i := slices.IndexFunc(vars, func(v kvtable.Pair) bool { return v.On && v.Key == name })
+	if i < 0 {
+		return kvtable.Pair{}, false
+	}
+	return vars[i], true
+}
+
+func (s scope) fill(text string) string {
+	return variable.ReplaceAllStringFunc(text, func(m string) string {
 		name := variable.FindStringSubmatch(m)[1]
 		if gen, ok := dynamic[name]; ok {
 			return gen()
 		}
-		if v, _, _, ok := e.Lookup(name); ok {
+		if v, _, _, ok := s.Lookup(name); ok {
 			return v
 		}
 		return m
 	})
 }
 
-func (e *environment) fillPairs(pairs []kvtable.Pair) []kvtable.Pair {
+func (s scope) fillPairs(pairs []kvtable.Pair) []kvtable.Pair {
 	out := slices.Clone(pairs)
 	for i := range out {
-		out[i].Key, out[i].Value = e.fill(out[i].Key), e.fill(out[i].Value)
+		out[i].Key, out[i].Value = s.fill(out[i].Key), s.fill(out[i].Value)
 	}
 	return out
 }
 
-// resolve returns a copy of r with the variables e defines filled in.
-func (e *environment) resolve(r *request) *request {
+// resolve returns a copy of r with the variables s defines filled in.
+func (s scope) resolve(r *request) *request {
 	cp := *r
 	// The URL's query goes as the Params it is synced with, which core
 	// escapes once their variables are filled in. A query a variable
 	// brings goes as it is.
-	cp.URL, cp.Body, cp.BodyFile = e.fill(fillPath(withQuery(r.URL, nil), e.fillPairs(r.PathVars))), e.fill(r.Body), e.fill(r.BodyFile)
-	cp.User, cp.Password, cp.Token, cp.Key = e.fill(r.User), e.fill(r.Password), e.fill(r.Token), e.fill(r.Key)
-	cp.Params, cp.Headers, cp.Form = e.fillPairs(r.Params), e.fillPairs(r.Headers), e.fillPairs(r.Form)
+	cp.URL, cp.Body, cp.BodyFile = s.fill(fillPath(withQuery(r.URL, nil), s.fillPairs(r.PathVars))), s.fill(r.Body), s.fill(r.BodyFile)
+	cp.User, cp.Password, cp.Token, cp.Key = s.fill(r.User), s.fill(r.Password), s.fill(r.Token), s.fill(r.Key)
+	cp.Params, cp.Headers, cp.Form = s.fillPairs(r.Params), s.fillPairs(r.Headers), s.fillPairs(r.Form)
 	return &cp
+}
+
+func (s scope) ranges(t *ui.Theme) func(string) []ui.TextRange {
+	return func(v string) []ui.TextRange { return templatefield.Ranges(v, s, t) }
 }
 
 // set gives the variable name value, turning it on, or adds it.
@@ -120,9 +152,10 @@ func (a *app) env() *environment {
 	return a.environment(a.ws.Env)
 }
 
-func (a *app) ranges(c *ui.Context) func(string) []ui.TextRange {
-	env, t := a.env(), c.Theme()
-	return func(v string) []ui.TextRange { return templatefield.Ranges(v, env, t) }
+// scope is the variables of the request chosen.
+func (a *app) scope() scope {
+	col, _ := a.ws.find(a.ws.Selected)
+	return scope{a.env(), col}
 }
 
 // envMenu chooses an environment into *id: the active one, with none among

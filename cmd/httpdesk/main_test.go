@@ -28,7 +28,7 @@ func TestSendRequest(t *testing.T) {
 	r.Params = []kvtable.Pair{{On: true, Key: "q", Value: "go"}, {On: false, Key: "skip", Value: "x"}}
 	r.AuthType, r.Token = authBearer, "{{ token }}"
 	r.BodyType, r.Body = bodyJSON, `{"n":1}`
-	res := send(context.Background(), requestArgs(env.resolve(r)), nil, nil)
+	res := send(context.Background(), requestArgs(scope{env: env}.resolve(r)), nil, nil)
 	want := "{\n  \"q\": \"go\",\n  \"auth\": \"Bearer abc\",\n  \"body\": {\n    \"n\": 1\n  }\n}"
 	if res.Code != 200 || !res.JSON || res.Body != want {
 		t.Errorf("response %d json=%v body %q err %q", res.Code, res.JSON, res.Body, res.Err)
@@ -50,14 +50,14 @@ func TestRequestArgs(t *testing.T) {
 	r = newRequest("t", "GET", "example.org/a?x=1&sig=a%2Bb&to=@kevin#top")
 	r.Params = parse(r.URL, nil)
 	want = []string{"--follow", "GET", "example.org/a#top", "x==1", "sig==a+b", `to==\@kevin`}
-	if got := requestArgs((*environment)(nil).resolve(r)); !slices.Equal(got, want) {
+	if got := requestArgs(scope{}.resolve(r)); !slices.Equal(got, want) {
 		t.Errorf("args %q, want %q", got, want)
 	}
 
 	env := &environment{Vars: []kvtable.Pair{{On: true, Key: "next", Value: "example.org/a?page=2"}}}
 	r = newRequest("t", "GET", "{{next}}")
 	want = []string{"--follow", "GET", "example.org/a?page=2"}
-	if got := requestArgs(env.resolve(r)); !slices.Equal(got, want) {
+	if got := requestArgs(scope{env: env}.resolve(r)); !slices.Equal(got, want) {
 		t.Errorf("args %q, want %q", got, want)
 	}
 }
@@ -109,5 +109,21 @@ func TestPathVars(t *testing.T) {
 		if got := fillPath(tc.url, vars); got != tc.want {
 			t.Errorf("%s: %s, want %s", tc.url, got, tc.want)
 		}
+	}
+}
+
+func TestCollectionInheritance(t *testing.T) {
+	col := &collection{
+		Name:    "api",
+		Headers: []kvtable.Pair{{On: true, Key: "X-Team", Value: "{{team}}"}, {On: true, Key: "Accept", Value: "a"}, {On: true, Key: "X-Off", Value: "b"}},
+		Vars:    []kvtable.Pair{{On: true, Key: "team", Value: "col"}, {On: true, Key: "host", Value: "col.example"}},
+	}
+	r := newRequest("t", "GET", "{{host}}")
+	r.Headers = []kvtable.Pair{{On: true, Key: "accept", Value: "mine"}, {Key: "x-off"}}
+	env := &environment{Vars: []kvtable.Pair{{On: true, Key: "host", Value: "env.example"}}}
+	got := scope{env, col}.resolve(col.effective(r))
+	want := []kvtable.Pair{{On: true, Key: "X-Team", Value: "col"}, {On: true, Key: "accept", Value: "mine"}, {Key: "x-off"}}
+	if got.URL != "env.example" || !slices.Equal(got.Headers, want) {
+		t.Errorf("url %q headers %v", got.URL, got.Headers)
 	}
 }

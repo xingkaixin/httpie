@@ -82,8 +82,9 @@ type app struct {
 	renameTo    string
 	deleting    *collection
 	deleteOpen  bool
-	authOf      *collection
-	authOpen    bool
+	colOf       *collection
+	colOpen     bool
+	colTab      int
 
 	envOpen, envDeleteOpen bool
 	networkOpen            bool
@@ -116,9 +117,9 @@ func iconButton(c *ui.Context, svg *ui.SVG, label string) ui.Element {
 }
 
 // varInput is a TextInput completing {{variables}} as the URL does.
-func (a *app) varInput(c *ui.Context, text *string) ui.Element {
+func (a *app) varInput(c *ui.Context, text *string, sc scope) ui.Element {
 	t := c.Theme()
-	in := templatefield.Input(c, text, a.env()).Padding(t.Space(1.5), t.Space(2.5)).Radius(t.Radius).Background(t.Surface).Border(1, t.Border)
+	in := templatefield.Input(c, text, sc).Padding(t.Space(1.5), t.Space(2.5)).Radius(t.Radius).Background(t.Surface).Border(1, t.Border)
 	switch {
 	case in.Focused():
 		in.BorderColor(t.Accent)
@@ -278,8 +279,8 @@ func (a *app) sidebar(c *ui.Context) {
 					if m.Item("重命名…").Chosen() {
 						action = func() { a.rename(&col.Name, "重命名集合") }
 					}
-					if m.Item("集合认证…").Chosen() {
-						action = func() { a.authOf, a.authOpen = col, true }
+					if m.Item("集合设置…").Chosen() {
+						action = func() { a.colOf, a.colOpen, a.colTab = col, true, 0 }
 					}
 					m.Separator()
 					if m.Item("删除集合…").Disabled(len(a.ws.Collections) == 1).Chosen() {
@@ -318,7 +319,7 @@ func (a *app) header(c *ui.Context, col *collection, r *request) {
 		}
 		a.envMenu(c, &a.ws.Env, true)
 		ui.Button(c, "复制命令").Menu(func(m *ui.Menu) {
-			req := a.env().resolve(col.effective(r))
+			req := scope{a.env(), col}.resolve(col.effective(r))
 			if m.Item("http 命令").Chosen() {
 				c.WriteClipboard(command(append(a.ws.Network.args(req.URL), requestArgs(req)...)))
 				c.Toast("已复制 http 命令")
@@ -370,7 +371,7 @@ func (a *app) urlBar(c *ui.Context, r *request) {
 				}
 			}
 		})
-		templatefield.Input(c.Key("url-"+r.ID), &r.URL, a.env()).Bind(&a.url).Placeholder("httpbin.org/get，或 :3000/api").Label("URL").
+		templatefield.Input(c.Key("url-"+r.ID), &r.URL, a.scope()).Bind(&a.url).Placeholder("httpbin.org/get，或 :3000/api").Label("URL").
 			Font("monospace").Grow(1).Padding(6, 4).OnSubmit(a.send).OnPaste(a.pasteCurl)
 		if sending {
 			if ui.Button(c, "取消").Clicked() {
@@ -412,15 +413,22 @@ func (a *app) requestPane(c *ui.Context, col *collection, r *request) {
 			ui.Scroll(c).Grow(1).Padding(0, 16, 16, 16).Gap(6).Children(func() {
 				ui.Row(c).Justify(ui.End).Children(func() { a.bulkButton(c) })
 				if a.reqTab == 0 {
-					if kvtable.EditorWith(c.Key("params-"+r.ID), &r.Params, kvtable.Options{KeyLabel: "参数", ValueLabel: "值", Ranges: a.ranges(c), Reorder: true, Bulk: &a.bulk}).Changed() {
+					if kvtable.EditorWith(c.Key("params-"+r.ID), &r.Params, kvtable.Options{KeyLabel: "参数", ValueLabel: "值", Ranges: a.scope().ranges(c.Theme()), Reorder: true, Bulk: &a.bulk}).Changed() {
 						r.URL = withQuery(r.URL, r.Params)
 						a.synced.url = r.URL
 					}
 					a.pathVarsEditor(c, r)
 				} else {
 					kvtable.EditorWith(c.Key("headers-"+r.ID), &r.Headers, kvtable.Options{
-						KeyLabel: "Header", ValueLabel: "值", Keys: headerNames, Values: headerValues, Ranges: a.ranges(c), Reorder: true, Bulk: &a.bulk,
+						KeyLabel: "Header", ValueLabel: "值", Keys: headerNames, Values: headerValues, Ranges: a.scope().ranges(c.Theme()), Reorder: true, Bulk: &a.bulk,
 					})
+					if inherited := col.inherited(r); len(inherited) > 0 {
+						names := make([]string, len(inherited))
+						for i, h := range inherited {
+							names[i] = h.Key
+						}
+						caption(c, "继承自集合："+strings.Join(names, "、")).Margin(4, 0, 0, 0)
+					}
 				}
 			})
 		case 2:
@@ -444,7 +452,7 @@ func (a *app) pathVarsEditor(c *ui.Context, r *request) {
 		v := &r.PathVars[i]
 		ui.Row(c.Key("path-" + r.ID + v.Key)).Gap(8).AlignItems(ui.Center).Children(func() {
 			ui.Text(c, ":"+v.Key).Font("monospace").FontSize(12).Width(140).Shrink(0)
-			a.varInput(c, &v.Value).Font("monospace").Grow(1)
+			a.varInput(c, &v.Value, a.scope()).Font("monospace").Grow(1)
 		})
 	}
 }
@@ -459,7 +467,7 @@ func (a *app) bodyEditor(c *ui.Context, r *request) {
 				// Variables may stand for values, as in {"id": {{id}}}, so the body is
 				// checked as sent; formatting works on it as written.
 				valid := json.Valid([]byte(r.Body))
-				if !valid && r.Body != "" && !json.Valid([]byte(a.env().fill(r.Body))) {
+				if !valid && r.Body != "" && !json.Valid([]byte(a.scope().fill(r.Body))) {
 					ui.Text(c, "JSON 格式有误").FontSize(12).TextColor(t.Danger)
 				}
 				ui.Button(c, "格式化").Disabled(!valid).OnClick(func() {
@@ -476,7 +484,7 @@ func (a *app) bodyEditor(c *ui.Context, r *request) {
 		case bodyForm, bodyMultipart:
 			ui.Scroll(c).Grow(1).Children(func() {
 				kvtable.EditorWith(c.Key("form-"+r.ID), &r.Form, kvtable.Options{
-					KeyLabel: "字段", ValueLabel: "值", Kinds: formKinds, Choose: a.chooseFile, Ranges: a.ranges(c), Reorder: true,
+					KeyLabel: "字段", ValueLabel: "值", Kinds: formKinds, Choose: a.chooseFile, Ranges: a.scope().ranges(c.Theme()), Reorder: true,
 				})
 			})
 		case bodyFile:
@@ -494,42 +502,75 @@ func (a *app) bodyEditor(c *ui.Context, r *request) {
 			if r.BodyType == bodyJSON {
 				ed.Placeholder("{\n  \"key\": \"value\"\n}").TextRanges(a.bodyHL.ranges(t, r.Body)...)
 			}
-			ed.TextRanges(templatefield.Ranges(r.Body, a.env(), t)...)
+			ed.TextRanges(templatefield.Ranges(r.Body, a.scope(), t)...)
 		}
+	})
+}
+
+// collectionDialog edits what the requests of a collection inherit.
+func (a *app) collectionDialog(c *ui.Context) {
+	col := a.colOf
+	ui.Modal(c, &a.colOpen, func() {
+		sc := scope{a.env(), col}
+		ui.Column(c).Width(600).Gap(12).Children(func() {
+			ui.Text(c, fmt.Sprintf("集合“%s”", col.Name)).FontSize(15).Bold()
+			ui.Row(c).Children(func() {
+				ui.Segmented(c, &a.colTab, "认证", withCount("Headers", col.Headers), withCount("变量", col.Vars)).Label("集合设置")
+			})
+			switch a.colTab {
+			case 0:
+				a.authFields(c, &col.Auth, authTypes, sc)
+			case 1:
+				caption(c, "请求中的同名 Header 会覆盖这里的值，停用的同名行则屏蔽它")
+				ui.Scroll(c).MaxHeight(360).Children(func() {
+					kvtable.EditorWith(c.Key("col-headers-"+col.ID), &col.Headers, kvtable.Options{
+						KeyLabel: "Header", ValueLabel: "值", Keys: headerNames, Values: headerValues, Ranges: sc.ranges(c.Theme()), Reorder: true,
+					})
+				})
+			case 2:
+				caption(c, "环境中同名的变量优先")
+				ui.Scroll(c).MaxHeight(360).Children(func() {
+					kvtable.EditorWith(c.Key("col-vars-"+col.ID), &col.Vars, kvtable.Options{KeyLabel: "变量", ValueLabel: "值", Kinds: varKinds, Reorder: true})
+				})
+			}
+			ui.Row(c).Justify(ui.End).Children(func() {
+				ui.PrimaryButton(c, "完成").OnClick(func() { a.colOpen = false })
+			})
+		})
 	})
 }
 
 func (a *app) authEditor(c *ui.Context, col *collection, r *request) {
 	ui.Column(c).Grow(1).Padding(0, 16, 16, 16).Gap(12).Children(func() {
-		a.authFields(c, &r.auth, requestAuthTypes)
+		a.authFields(c, &r.auth, requestAuthTypes, scope{a.env(), col})
 		switch r.AuthType {
 		case authNone:
 			caption(c, "此请求不带认证信息")
 		case authInherit:
 			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 				caption(c, "继承自集合："+col.Auth.AuthType)
-				ui.Button(c, "编辑").OnClick(func() { a.authOf, a.authOpen = col, true })
+				ui.Button(c, "编辑").OnClick(func() { a.colOf, a.colOpen, a.colTab = col, true, 0 })
 			})
 		}
 	})
 }
 
-// authFields edits au, of one of types.
-func (a *app) authFields(c *ui.Context, au *auth, types []string) {
+// authFields edits au, of one of types, whose variables sc defines.
+func (a *app) authFields(c *ui.Context, au *auth, types []string, sc scope) {
 	ui.Row(c).Children(func() { menuSelect(c, "认证方式", &au.AuthType, types) })
 	switch au.AuthType {
 	case authBasic, authDigest:
-		ui.Field(c, "用户名", func() { a.varInput(c, &au.User) })
-		ui.Field(c, "密码", func() { a.varInput(c, &au.Password).Password() })
+		ui.Field(c, "用户名", func() { a.varInput(c, &au.User, sc) })
+		ui.Field(c, "密码", func() { a.varInput(c, &au.Password, sc).Password() })
 	case authBearer:
-		ui.Field(c, "Token", func() { a.varInput(c, &au.Token).Font("monospace") })
+		ui.Field(c, "Token", func() { a.varInput(c, &au.Token, sc).Font("monospace") })
 	case authAPIKey:
 		if au.In == "" {
 			au.In = inHeader
 		}
 		ui.Field(c, "位置", func() { ui.Row(c).Children(func() { menuSelect(c, "位置", &au.In, keyPlaces) }) })
-		ui.Field(c, "名称", func() { a.varInput(c, &au.Key).Placeholder("X-API-Key").Font("monospace") })
-		ui.Field(c, "值", func() { a.varInput(c, &au.Token).Font("monospace") })
+		ui.Field(c, "名称", func() { a.varInput(c, &au.Key, sc).Placeholder("X-API-Key").Font("monospace") })
+		ui.Field(c, "值", func() { a.varInput(c, &au.Token, sc).Font("monospace") })
 	}
 }
 
@@ -710,7 +751,7 @@ func (a *app) send() {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	a.inflight[r.ID] = cancel
-	req := a.env().resolve(col.effective(r))
+	req := scope{a.env(), col}.resolve(col.effective(r))
 	id, jar := r.ID, a.ws.Cookies
 	args := append(a.ws.Network.args(req.URL), requestArgs(req)...)
 	if a.ws.Network.ProxyMode == "" || a.ws.Network.ProxyMode == proxySystem {
@@ -922,6 +963,7 @@ func (a *app) deleteRequest(c *ui.Context, col *collection, r *request) {
 func (a *app) dialogs(c *ui.Context) {
 	a.envDialog(c)
 	a.networkDialog(c)
+	a.collectionDialog(c)
 	ui.Modal(c, &a.renameOpen, func() {
 		rename := func() {
 			if a.renameTo != "" {
@@ -935,15 +977,6 @@ func (a *app) dialogs(c *ui.Context) {
 			ui.Row(c).Gap(8).Justify(ui.End).Children(func() {
 				ui.Button(c, "取消").OnClick(func() { a.renameOpen = false })
 				ui.PrimaryButton(c, "保存").OnClick(rename)
-			})
-		})
-	})
-	ui.Modal(c, &a.authOpen, func() {
-		ui.Column(c).Width(360).Gap(12).Children(func() {
-			ui.Text(c, fmt.Sprintf("集合“%s”的认证", a.authOf.Name)).FontSize(15).Bold()
-			a.authFields(c, &a.authOf.Auth, authTypes)
-			ui.Row(c).Justify(ui.End).Children(func() {
-				ui.PrimaryButton(c, "完成").OnClick(func() { a.authOpen = false })
 			})
 		})
 	})

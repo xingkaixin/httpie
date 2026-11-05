@@ -109,7 +109,7 @@ func TestCurlCommandRoundTrip(t *testing.T) {
 	form := newRequest("", "POST", ":3000/login")
 	form.BodyType, form.AuthType, form.Form = bodyForm, authNone, []kvtable.Pair{on("user", "kev"), on("pass", "a&b=c")}
 	for _, r := range []*request{jsonReq, multipart, form} {
-		cmd := curlCommand((*environment)(nil).resolve(r), &network{})
+		cmd := curlCommand(scope{}.resolve(r), &network{})
 		got, err := parseCurl(cmd)
 		if err != nil {
 			t.Fatalf("%s: %v", cmd, err)

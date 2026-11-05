@@ -317,11 +317,17 @@ func (a *app) header(c *ui.Context, col *collection, r *request) {
 			a.cookieMenu(c)
 		}
 		a.envMenu(c, &a.ws.Env, true)
-		if ui.Button(c, "复制命令").Tooltip("复制为 http 命令").Clicked() {
+		ui.Button(c, "复制命令").Menu(func(m *ui.Menu) {
 			req := a.env().resolve(col.effective(r))
-			c.WriteClipboard(command(append(a.ws.Network.args(req.URL), requestArgs(req)...)))
-			c.Toast("已复制 http 命令")
-		}
+			if m.Item("http 命令").Chosen() {
+				c.WriteClipboard(command(append(a.ws.Network.args(req.URL), requestArgs(req)...)))
+				c.Toast("已复制 http 命令")
+			}
+			if m.Item("cURL").Chosen() {
+				c.WriteClipboard(curlCommand(req, &a.ws.Network))
+				c.Toast("已复制 cURL 命令")
+			}
+		})
 	})
 }
 

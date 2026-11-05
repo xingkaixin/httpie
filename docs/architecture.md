@@ -22,10 +22,11 @@
 | `manager.go`、`manual.go`、`updates.go` | 帮助、参数导出、管理命令、更新检查 |
 | `stdin.go` | stdin 首次数据观察及延迟警告 |
 | `cmd/httpdesk/main.go`、`model.go` | 桌面界面、集合与请求、工作区持久化 |
-| `cmd/httpdesk/send.go` | 请求转为参数、复制命令、经 core 发送并格式化响应 |
+| `cmd/httpdesk/send.go` | 请求转为参数、复制 http 命令、经 core 发送并格式化响应 |
 | `cmd/httpdesk/env.go` | 环境、`{{变量}}` 解析与高亮 |
 | `cmd/httpdesk/history.go` | 每个请求最近 20 次响应的保存、迁移与清理 |
 | `cmd/httpdesk/network.go` | 代理、CA 与按主机匹配的客户端证书 |
+| `cmd/httpdesk/curl.go` | cURL 命令的导入与导出 |
 
 命令行实现均位于 `internal/`；桌面客户端的打包配置在根目录 `mygo.json`。没有公开库接口、插件框架或额外服务进程。
 

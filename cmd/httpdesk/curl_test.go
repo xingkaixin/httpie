@@ -96,3 +96,28 @@ func TestParseCurl(t *testing.T) {
 		}
 	}
 }
+
+func TestCurlCommandRoundTrip(t *testing.T) {
+	on := func(k, v string) kvtable.Pair { return kvtable.Pair{On: true, Key: k, Value: v, Kind: kindText} }
+	jsonReq := newRequest("", "PUT", "example.org/a?x=1")
+	jsonReq.Params = []kvtable.Pair{on("x", "1"), on("q", "a b")}
+	jsonReq.BodyType, jsonReq.Body = bodyJSON, `{"it's": "a\nb"}`
+	jsonReq.AuthType, jsonReq.User, jsonReq.Password = authDigest, "kev", "p:w"
+	multipart := newRequest("", "POST", "https://example.org/up")
+	multipart.BodyType, multipart.AuthType = bodyMultipart, authNone
+	multipart.Form = []kvtable.Pair{on("note", "@not a file"), {On: true, Key: "doc", Value: "/tmp/a b.txt", Kind: kindFile}}
+	form := newRequest("", "POST", ":3000/login")
+	form.BodyType, form.AuthType, form.Form = bodyForm, authNone, []kvtable.Pair{on("user", "kev"), on("pass", "a&b=c")}
+	for _, r := range []*request{jsonReq, multipart, form} {
+		cmd := curlCommand((*environment)(nil).resolve(r), &network{})
+		got, err := parseCurl(cmd)
+		if err != nil {
+			t.Fatalf("%s: %v", cmd, err)
+		}
+		url := withQuery(completeRaw(r.URL), r.Params)
+		if got.Method != r.Method || got.URL != url || got.Body != r.Body || got.BodyType != r.BodyType ||
+			!reflect.DeepEqual(got.Form, r.Form) || got.AuthType != r.AuthType || got.User != r.User || got.Password != r.Password {
+			t.Errorf("%s\nimported %+v", cmd, got)
+		}
+	}
+}

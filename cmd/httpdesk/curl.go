@@ -2,6 +2,8 @@ package main
 
 import (
 	"errors"
+	"mime"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -19,8 +21,8 @@ var curlShort = map[byte]string{
 
 var curlValued = map[string]bool{
 	"url": true, "request": true, "header": true, "cookie": true, "user-agent": true, "referer": true,
-	"data": true, "data-ascii": true, "data-binary": true, "data-raw": true, "json": true,
-	"form": true, "user": true, "max-time": true,
+	"data": true, "data-ascii": true, "data-binary": true, "data-raw": true, "data-urlencode": true, "json": true,
+	"form": true, "form-string": true, "user": true, "max-time": true,
 }
 
 // parseCurl returns the request of a curl command line, as browsers,
@@ -36,6 +38,7 @@ func parseCurl(cmd string) (*request, error) {
 	r.AuthType = authNone
 	header := func(k, v string) { r.Headers = append(r.Headers, kvtable.Pair{On: true, Key: k, Value: v}) }
 	var method, user, data, file string
+	var urlencoded []kvtable.Pair
 	var sent, asJSON, head, digest bool
 	apply := func(name, value string) {
 		switch name {
@@ -72,13 +75,19 @@ func parseCurl(cmd string) (*request, error) {
 				data += value
 			}
 			sent, asJSON = true, asJSON || name == "json"
-		case "form":
+		case "data-urlencode":
+			k, v, _ := strings.Cut(value, "=")
+			urlencoded = append(urlencoded, kvtable.Pair{On: true, Key: k, Value: v, Kind: kindText})
+		case "form", "form-string":
 			k, v, _ := strings.Cut(value, "=")
 			kind := kindText
-			if strings.HasPrefix(v, "@") {
+			if name == "form" && strings.HasPrefix(v, "@") {
 				kind, v = kindFile, v[1:]
 			}
-			r.Form = append(r.Form, kvtable.Pair{On: true, Key: k, Value: formValue(v, kind == kindFile), Kind: kind})
+			if name == "form" {
+				v = formValue(v, kind == kindFile)
+			}
+			r.Form = append(r.Form, kvtable.Pair{On: true, Key: k, Value: v, Kind: kind})
 		case "user":
 			user = value
 		case "digest":
@@ -145,6 +154,8 @@ func parseCurl(cmd string) (*request, error) {
 	switch {
 	case len(r.Form) > 0:
 		r.BodyType = bodyMultipart
+	case len(urlencoded) > 0 && !sent:
+		r.BodyType, r.Form = bodyForm, urlencoded
 	case file != "":
 		r.BodyType, r.BodyFile = bodyFile, file
 	case sent && strings.Contains(strings.ToLower(contentType), "json"):
@@ -158,7 +169,7 @@ func parseCurl(cmd string) (*request, error) {
 		r.Method = method
 	case head:
 		r.Method = "HEAD"
-	case sent || len(r.Form) > 0:
+	case sent || len(r.Form) > 0 || len(urlencoded) > 0:
 		r.Method = "POST"
 	default:
 		r.Method = "GET"
@@ -298,4 +309,109 @@ func ansiC(w *strings.Builder, s string) (int, error) {
 		}
 	}
 	return 0, errQuote
+}
+
+// curlCommand returns the curl command sending r, a request resolved, as
+// n connects; a line for each option, as API docs show them.
+func curlCommand(r *request, n *network) string {
+	base, query, _ := split(completeRaw(r.URL))
+	if extra := strings.TrimPrefix(withQuery("", r.Params), "?"); extra != "" {
+		if query != "" {
+			query += "&"
+		}
+		query += extra
+	}
+	if query != "" {
+		base += "?" + query
+	}
+	first := []string{"curl"}
+	var lines [][]string
+	opt := func(words ...string) { lines = append(lines, words) }
+	hasBody := r.BodyType != bodyNone && (r.Body != "" || len(enabled(r.Form)) > 0 || r.BodyFile != "")
+	switch {
+	case r.Method == "HEAD":
+		first = append(first, "--head")
+	case r.Method != "GET" || hasBody:
+		first = append(first, "-X", r.Method)
+	}
+	first = append(first, base)
+	headers := enabled(r.Headers)
+	has := func(name string) bool { return headerIndex(headers, name) >= 0 }
+	for _, h := range headers {
+		if h.Value == "" {
+			opt("-H", h.Key+";")
+		} else {
+			opt("-H", h.Key+": "+h.Value)
+		}
+	}
+	switch r.AuthType {
+	case authBasic:
+		opt("-u", r.User+":"+r.Password)
+	case authDigest:
+		opt("--digest", "-u", r.User+":"+r.Password)
+	case authBearer:
+		opt("-H", "Authorization: Bearer "+r.Token)
+	}
+	if hasBody {
+		switch r.BodyType {
+		case bodyJSON:
+			// As the http command sends JSON.
+			if !has("Content-Type") {
+				opt("-H", "Content-Type: application/json")
+			}
+			if !has("Accept") {
+				opt("-H", "Accept: application/json, */*;q=0.5")
+			}
+			opt("--data-raw", r.Body)
+		case bodyText:
+			if !has("Content-Type") {
+				opt("-H", "Content-Type: text/plain; charset=utf-8")
+			}
+			opt("--data-raw", r.Body)
+		case bodyForm:
+			for _, f := range enabled(r.Form) {
+				opt("--data-urlencode", f.Key+"="+f.Value)
+			}
+		case bodyMultipart:
+			for _, f := range enabled(r.Form) {
+				if f.Kind == kindFile {
+					opt("-F", f.Key+"=@"+f.Value)
+				} else {
+					opt("--form-string", f.Key+"="+f.Value)
+				}
+			}
+		case bodyFile:
+			if t := mime.TypeByExtension(filepath.Ext(r.BodyFile)); t != "" && !has("Content-Type") {
+				opt("-H", "Content-Type: "+t)
+			}
+			opt("--data-binary", "@"+r.BodyFile)
+		}
+	}
+	if r.Follow {
+		opt("-L")
+	}
+	if r.Insecure {
+		opt("-k")
+	}
+	if r.Timeout > 0 {
+		opt("--max-time", strconv.FormatFloat(r.Timeout, 'f', -1, 64))
+	}
+	if n.ProxyMode == proxyCustom && n.ProxyURL != "" {
+		opt("-x", n.ProxyURL)
+	}
+	if n.CA != "" {
+		opt("--cacert", n.CA)
+	}
+	if c := n.cert(r.URL); c != nil {
+		opt("--cert", c.Cert)
+		if c.Key != "" {
+			opt("--key", c.Key)
+		}
+	}
+	var b strings.Builder
+	b.WriteString(quoteWords(first))
+	for _, l := range lines {
+		b.WriteString(" \\\n  " + quoteWords(l))
+	}
+	return b.String()
 }

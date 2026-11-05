@@ -37,6 +37,10 @@ type clientCert struct {
 // completeURL parses raw as core completes it: ":3000/a" is localhost's,
 // and a URL without a scheme is http.
 func completeURL(raw string) (*url.URL, error) {
+	return url.Parse(completeRaw(raw))
+}
+
+func completeRaw(raw string) string {
 	raw = strings.TrimPrefix(raw, "://")
 	if !hasScheme.MatchString(raw) {
 		if strings.HasPrefix(raw, ":") {
@@ -44,7 +48,7 @@ func completeURL(raw string) (*url.URL, error) {
 		}
 		raw = "http://" + raw
 	}
-	return url.Parse(raw)
+	return raw
 }
 
 // args returns the options connecting to rawURL as n says, but for the

@@ -61,7 +61,7 @@ mise run dev
 mise exec -- go tool mygo build
 ```
 
-`dev` 以热重载运行；`build` 生成应用包，输出到 `build/`。集合、请求与环境保存在应用数据目录的 `workspace.json`。请求中可以用 `{{变量}}` 引用当前环境的值，“复制命令”给出等价的 `http` 命令。
+`dev` 以热重载运行；`build` 生成应用包，输出到 `build/`。集合、请求与环境保存在应用数据目录的 `workspace.json`。请求中可以用 `{{变量}}` 引用当前环境的值，“复制命令”给出等价的 `http` 或 cURL 命令。
 
 ## 验证
 

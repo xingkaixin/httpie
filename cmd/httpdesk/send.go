@@ -164,12 +164,18 @@ func requestArgs(r *request) []string {
 var shellSafe = regexp.MustCompile(`^[\w@%+=:,./-]+$`)
 
 func command(args []string) string {
-	parts := []string{"http"}
-	for _, a := range args {
-		if !shellSafe.MatchString(a) {
-			a = "'" + strings.ReplaceAll(a, "'", `'\''`) + "'"
+	return quoteWords(append([]string{"http"}, args...))
+}
+
+// quoteWords joins words into a line of a POSIX shell, quoting those that
+// need it.
+func quoteWords(words []string) string {
+	parts := make([]string, len(words))
+	for i, w := range words {
+		if !shellSafe.MatchString(w) {
+			w = "'" + strings.ReplaceAll(w, "'", `'\''`) + "'"
 		}
-		parts = append(parts, a)
+		parts[i] = w
 	}
 	return strings.Join(parts, " ")
 }

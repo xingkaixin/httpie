@@ -57,6 +57,7 @@ type workspace struct {
 	Env          string         `json:"env,omitempty"`
 	// Cookies is the jar all requests share, whatever the environment.
 	Cookies  []core.Cookie `json:"cookies,omitempty"`
+	Network  network       `json:"network"`
 	Selected string        `json:"selected"`
 	Split    float32       `json:"split"`
 }

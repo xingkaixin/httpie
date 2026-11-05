@@ -8,7 +8,6 @@ import (
 	"io"
 	"mime"
 	"net/http"
-	"net/url"
 	"regexp"
 	"slices"
 	"strconv"
@@ -68,14 +67,7 @@ var hasScheme = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9+.-]*://`)
 func systemProxy(rawURL string) []string {
 	// The URL is completed as core does, or ":3000" would be looked up
 	// as no host rather than localhost, which goes direct.
-	rawURL = strings.TrimPrefix(rawURL, "://")
-	if !hasScheme.MatchString(rawURL) {
-		if strings.HasPrefix(rawURL, ":") {
-			rawURL = "localhost" + rawURL
-		}
-		rawURL = "http://" + rawURL
-	}
-	u, err := url.Parse(rawURL)
+	u, err := completeURL(rawURL)
 	if err != nil {
 		return nil
 	}

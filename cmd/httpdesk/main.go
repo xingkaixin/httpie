@@ -29,6 +29,7 @@ var (
 	iconUpDown     = icon(`<path d="m7 15 5 5 5-5"/><path d="m7 9 5-5 5 5"/>`)
 	iconCopy       = icon(`<rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>`)
 	iconSend       = icon(`<path d="M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z"/><path d="m21.854 2.147-10.94 10.939"/>`)
+	iconGlobe      = icon(`<circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/>`)
 	iconHistory    = icon(`<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/>`)
 )
 
@@ -85,6 +86,7 @@ type app struct {
 	authOpen    bool
 
 	envOpen, envDeleteOpen bool
+	networkOpen            bool
 	editing                string
 }
 
@@ -237,6 +239,7 @@ func (a *app) sidebar(c *ui.Context) {
 			ui.Spacer(c)
 			iconButton(c, iconPlus, "新建请求 ⌘N").OnClick(func() { a.newRequest(nil) })
 			iconButton(c, iconFolderPlus, "新建集合").OnClick(a.newCollection)
+			iconButton(c, iconGlobe, "网络设置").OnClick(func() { a.networkOpen = true })
 		})
 		ui.Sidebar(c, &a.ws.Selected, func() {
 			for _, col := range a.ws.Collections {
@@ -315,7 +318,8 @@ func (a *app) header(c *ui.Context, col *collection, r *request) {
 		}
 		a.envMenu(c, &a.ws.Env, true)
 		if ui.Button(c, "复制命令").Tooltip("复制为 http 命令").Clicked() {
-			c.WriteClipboard(command(requestArgs(a.env().resolve(col.effective(r)))))
+			req := a.env().resolve(col.effective(r))
+			c.WriteClipboard(command(append(a.ws.Network.args(req.URL), requestArgs(req)...)))
 			c.Toast("已复制 http 命令")
 		}
 	})
@@ -674,7 +678,11 @@ func (a *app) send() {
 	ctx, cancel := context.WithCancel(context.Background())
 	a.inflight[r.ID] = cancel
 	req := a.env().resolve(col.effective(r))
-	id, args, jar := r.ID, requestArgs(req), a.ws.Cookies
+	id, jar := r.ID, a.ws.Cookies
+	args := append(a.ws.Network.args(req.URL), requestArgs(req)...)
+	if a.ws.Network.ProxyMode == "" || a.ws.Network.ProxyMode == proxySystem {
+		args = append(systemProxy(req.URL), args...)
+	}
 	// Variables go to the environment the request was sent with.
 	rules, envID := enabled(r.Extract), a.ws.Env
 	var live *response
@@ -693,7 +701,7 @@ func (a *app) send() {
 		})
 	}
 	go func() {
-		res := send(ctx, append(systemProxy(req.URL), args...), jar, progress)
+		res := send(ctx, args, jar, progress)
 		cancel()
 		if res == nil {
 			// A canceled request keeps the response it had.
@@ -880,6 +888,7 @@ func (a *app) deleteRequest(c *ui.Context, col *collection, r *request) {
 
 func (a *app) dialogs(c *ui.Context) {
 	a.envDialog(c)
+	a.networkDialog(c)
 	ui.Modal(c, &a.renameOpen, func() {
 		rename := func() {
 			if a.renameTo != "" {

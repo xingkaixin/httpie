@@ -25,6 +25,7 @@
 | `cmd/httpdesk/send.go` | 请求转为参数、复制命令、经 core 发送并格式化响应 |
 | `cmd/httpdesk/env.go` | 环境、`{{变量}}` 解析与高亮 |
 | `cmd/httpdesk/history.go` | 每个请求最近 20 次响应的保存、迁移与清理 |
+| `cmd/httpdesk/network.go` | 代理、CA 与按主机匹配的客户端证书 |
 
 命令行实现均位于 `internal/`；桌面客户端的打包配置在根目录 `mygo.json`。没有公开库接口、插件框架或额外服务进程。
 

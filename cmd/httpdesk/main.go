@@ -29,6 +29,7 @@ var (
 	iconUpDown     = icon(`<path d="m7 15 5 5 5-5"/><path d="m7 9 5-5 5 5"/>`)
 	iconCopy       = icon(`<rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>`)
 	iconSend       = icon(`<path d="M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z"/><path d="m21.854 2.147-10.94 10.939"/>`)
+	iconHistory    = icon(`<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/>`)
 )
 
 var methodColors = map[string]ui.Color{
@@ -62,6 +63,7 @@ type app struct {
 	saved     []byte
 	ws        *workspace
 	responses map[string]*response
+	history   map[string][]entry
 	inflight  map[string]context.CancelFunc
 	url       ui.Handle
 	synced    struct{ id, url string }
@@ -549,6 +551,15 @@ func (a *app) responsePane(c *ui.Context, r *request) {
 			if at := ago(res.At); at != "" {
 				caption(c, at).Tooltip(res.At.Format("2006-01-02 15:04:05")).SingleLine().Shrink(0)
 			}
+			if hist := a.history[r.ID]; len(hist) > 1 {
+				iconButton(c, iconHistory, "历史响应").Shrink(0).Menu(func(m *ui.Menu) {
+					for _, e := range hist {
+						if m.Item(e.label()).Checked(e.is(res)).Chosen() {
+							a.showEntry(r.ID, e)
+						}
+					}
+				})
+			}
 			if iconButton(c, iconCopy, "复制响应").Shrink(0).Clicked() {
 				c.WriteClipboard(res.view.Buffer.String())
 				c.Toast("已复制响应内容")
@@ -711,8 +722,13 @@ func (a *app) send() {
 			}
 		})
 		// Saved once shown: a large body takes tens of milliseconds to write.
-		if res.Code != 0 {
-			saveResponse(a.resDir, id, res)
+		if res.Code == 0 {
+			return
+		}
+		if e, ok := saveResponse(filepath.Join(a.resDir, id), res); ok {
+			a.win.Update(func() {
+				a.history[id] = append([]entry{e}, a.history[id][:min(len(a.history[id]), maxHistory-1)]...)
+			})
 		}
 	}()
 }
@@ -733,21 +749,38 @@ func (a *app) setVars(envID string, vars []kvtable.Pair, missing []string) {
 	}
 }
 
-// loadResponse shows the response the request id had when the app last
-// ran, unless a send's comes first.
+// loadResponse shows the last response the request id had when the app
+// last ran, unless a send's comes first.
 func (a *app) loadResponse(id string) {
 	a.responses[id] = nil
 	go func() {
-		res := readResponse(a.resDir, id)
-		if res == nil {
-			return
+		hist := entries(filepath.Join(a.resDir, id))
+		var res *response
+		if len(hist) > 0 {
+			res = readResponse(filepath.Join(a.resDir, id, hist[0].file()))
 		}
-		res.buildViews()
+		if res != nil {
+			res.buildViews()
+		}
 		a.win.Update(func() {
-			if a.responses[id] == nil {
+			a.history[id] = hist
+			if res != nil && a.responses[id] == nil {
 				a.responses[id] = res
 			}
 		})
+	}()
+}
+
+// showEntry shows the response e of the history of the request id.
+func (a *app) showEntry(id string, e entry) {
+	go func() {
+		res := readResponse(filepath.Join(a.resDir, id, e.file()))
+		if res == nil {
+			a.win.Update(func() { a.notice = "无法读取这条历史响应" })
+			return
+		}
+		res.buildViews()
+		a.win.Update(func() { a.responses[id] = res })
 	}()
 }
 
@@ -900,6 +933,7 @@ func main() {
 	a := &app{
 		path: path, resDir: resDir, ws: ws,
 		responses: map[string]*response{},
+		history:   map[string][]entry{},
 		inflight:  map[string]context.CancelFunc{},
 	}
 	mygo.App.WhenReady(func() {

@@ -61,7 +61,7 @@ mise run dev
 mise exec -- go tool mygo build
 ```
 
-`dev` 以热重载运行；`build` 生成应用包，输出到 `build/`。集合、请求与环境保存在应用数据目录的 `workspace.json`。请求中可以用 `{{变量}}` 引用当前环境或所在集合的值；集合的认证、Header 和变量由其中的请求继承。“复制命令”给出等价的 `http` 或 cURL 命令。侧栏可以导入 Postman v2.0/v2.1 集合与环境，文件夹展开为“文件夹 / 请求”的名称，脚本不导入。请求的 Tests 检查状态码、耗时、Header、正文和 JSON 路径，如 `status` `2xx`、`$.data.id` `> 0`。
+`dev` 以热重载运行；`build` 生成应用包，输出到 `build/`。集合、请求与环境保存在应用数据目录的 `workspace.json`。请求中可以用 `{{变量}}` 引用当前环境或所在集合的值；集合的认证、Header 和变量由其中的请求继承。“复制命令”给出等价的 `http` 或 cURL 命令。侧栏可以导入 Postman v2.0/v2.1 集合与环境，文件夹展开为“文件夹 / 请求”的名称，脚本不导入。请求的 Tests 检查状态码、耗时、Header、正文和 JSON 路径，如 `status` `2xx`、`$.data.id` `> 0`。响应 Body 可切换为 JSON 树、图片、HTML 预览或 Hex，预览不执行脚本、不加载外部资源。
 
 ## 验证
 

@@ -18,7 +18,9 @@ import (
 	"unicode/utf8"
 
 	"github.com/egoist/mygo/netproxy"
+	"github.com/egoist/mygo/ui"
 	"github.com/egoist/mygo/ui/editor"
+	"github.com/xingkaixin/mygo-native-ui/ui/jsonview"
 	"github.com/xingkaixin/mygo-native-ui/ui/waterfall"
 
 	"httpie/internal/core"
@@ -51,7 +53,12 @@ type response struct {
 	At        time.Time
 	Checks    []check `json:",omitempty"`
 	Timing    []span  `json:",omitempty"`
+	// Raw is a body of an image or of bytes not text, which show as such.
+	Raw       []byte `json:",omitempty"`
 	spans     []*waterfall.Span
+	tree      *jsonview.Document
+	image     ui.ImageSource
+	html      bool
 	view      *editor.State
 	sentView  *editor.State
 	streaming bool
@@ -311,6 +318,9 @@ func exchange(ctx context.Context, args []string, jar []core.Cookie, progress fu
 		data, res.Truncated = data[:maxBody], true
 	}
 	res.Body, res.JSON = displayBody(o, resp, rec.headers, data)
+	if media, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type")); strings.HasPrefix(media, "image/") || bytes.IndexByte(data, 0) >= 0 {
+		res.Raw = data
+	}
 	return res, nil
 }
 

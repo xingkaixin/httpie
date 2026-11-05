@@ -2,11 +2,17 @@ package main
 
 import (
 	"fmt"
+	"mime"
+	"slices"
+	"strings"
 	"time"
 
+	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 	"github.com/egoist/mygo/ui/editor"
+	"github.com/xingkaixin/mygo-native-ui/ui/hexview"
 	"github.com/xingkaixin/mygo-native-ui/ui/jsondiff"
+	"github.com/xingkaixin/mygo-native-ui/ui/jsonview"
 	"github.com/xingkaixin/mygo-native-ui/ui/testresults"
 	"github.com/xingkaixin/mygo-native-ui/ui/waterfall"
 )
@@ -75,6 +81,13 @@ func (a *app) responsePane(c *ui.Context, r *request) {
 				if at := ago(res.At); at != "" {
 					caption(c, at).Tooltip(res.At.Format("2006-01-02 15:04:05")).SingleLine().Shrink(0)
 				}
+				if views := res.views(); a.resTab == resBody && len(views) > 1 {
+					ui.Spacer(c)
+					i := max(slices.Index(views, a.bodyView), 0)
+					if ui.Segmented(c, &i, views...).Label("Body 视图").Changed() {
+						a.bodyView = views[i]
+					}
+				}
 			})
 		}
 		switch {
@@ -125,7 +138,7 @@ func (a *app) responsePane(c *ui.Context, r *request) {
 			if res.Truncated {
 				caption(c, "响应超过 10 MB，只显示前 10 MB").Padding(0, 16, 6, 16)
 			}
-			editor.View(c.Key("res-"+r.ID), res.view).Grow(1).Margin(0, 16, 16, 16)
+			a.bodyPane(c, r, res)
 		}
 	})
 }
@@ -179,12 +192,102 @@ func passed(checks []check) int {
 	return n
 }
 
-// buildViews makes the editors showing res, which take long for a large
-// body, off the main thread.
+const (
+	viewText    = "文本"
+	viewTree    = "树"
+	viewSource  = "源码"
+	viewPreview = "预览"
+	viewHex     = "Hex"
+)
+
+// views are the ways res's body shows, the first by default, or when the
+// one chosen last is not among them.
+func (res *response) views() []string {
+	switch {
+	case res.image != nil:
+		return []string{viewPreview, viewHex}
+	case res.Raw != nil:
+		return []string{viewHex}
+	case res.tree != nil:
+		return []string{viewText, viewTree}
+	case res.html:
+		return []string{viewSource, viewPreview}
+	}
+	return []string{viewText}
+}
+
+func (a *app) bodyPane(c *ui.Context, r *request, res *response) {
+	views := res.views()
+	switch views[max(slices.Index(views, a.bodyView), 0)] {
+	case viewTree:
+		jsonview.View(c.Key("tree-"+r.ID), &a.tree, res.tree).Grow(1).Margin(0, 16, 16, 16)
+	case viewHex:
+		hexview.View(c.Key("hex-"+r.ID), &a.hex, res.Raw).Grow(1).Margin(0, 16, 16, 16)
+	case viewPreview:
+		if res.image != nil {
+			w, h := ui.ImageSize(res.image)
+			ui.Column(c).Grow(1).Padding(0, 16, 16, 16).Center().Children(func() {
+				ui.Image(c, res.image).Fit(ui.Contain).MaxWidth(w).MaxHeight(h).AspectRatio(w / max(h, 1)).FillWidth()
+				caption(c, fmt.Sprintf("%.0f × %.0f", w, h))
+			})
+		} else {
+			a.htmlPreview(c, res)
+		}
+	default:
+		editor.View(c.Key("res-"+r.ID), res.view).Grow(1).Margin(0, 16, 16, 16)
+	}
+}
+
+// previewPolicy keeps an HTML preview from running scripts and loading
+// anything but inline styles and data: images.
+const previewPolicy = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:">`
+
+const previewBase = "about:blank"
+
+// htmlPreview shows res's body as a page, in the one web view the app
+// makes for it, which goes nowhere else.
+func (a *app) htmlPreview(c *ui.Context, res *response) {
+	if a.win == nil {
+		return
+	}
+	if a.web == nil {
+		web, err := a.win.NewWebView(mygo.WebViewOptions{})
+		if err != nil {
+			caption(c, "无法预览："+err.Error()).Padding(0, 16)
+			return
+		}
+		web.Page().OnWillNavigate(func(e *mygo.NavigateEvent) {
+			if e.URL != previewBase {
+				e.PreventDefault()
+			}
+		})
+		a.web = web
+	}
+	if a.webShows != res {
+		a.web.Page().LoadHTML(previewPolicy+res.Body, previewBase)
+		a.webShows = res
+	}
+	ui.WebView(c, a.web).Grow(1).Margin(0, 16, 16, 16).Radius(8)
+}
+
+// buildViews makes the views of res, which take long for a large body,
+// off the main thread.
 func (res *response) buildViews() {
 	res.view = textView(res.Body, "响应 Body", res.JSON)
 	res.sentView = textView(res.Sent, "实际发出的请求", false)
 	res.spans = waterfallSpans(res.Timing)
+	if res.JSON && !res.Truncated {
+		res.tree, _ = jsonview.Parse([]byte(res.Body))
+	}
+	if res.Raw != nil {
+		res.image, _ = ui.DecodeImage(res.Raw)
+	}
+	for _, h := range res.Headers {
+		if strings.EqualFold(h.Name, "Content-Type") {
+			media, _, _ := mime.ParseMediaType(h.Value)
+			res.html = media == "text/html"
+		}
+	}
 }
 
 // appendText adds text to the end of st, which follows it there unless

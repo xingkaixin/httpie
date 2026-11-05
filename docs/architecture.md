@@ -22,7 +22,7 @@
 | `manager.go`、`manual.go`、`updates.go` | 帮助、参数导出、管理命令、更新检查 |
 | `stdin.go` | stdin 首次数据观察及延迟警告 |
 | `cmd/httpdesk/main.go`、`model.go` | 桌面界面、集合与请求、工作区持久化 |
-| `cmd/httpdesk/response.go` | 响应面板与各视图 |
+| `cmd/httpdesk/response.go` | 响应面板与各视图：文本、JSON 树、图片、不执行脚本的 HTML 预览、Hex |
 | `cmd/httpdesk/send.go` | 请求转为参数、复制 http 命令、经 core 发送并格式化响应 |
 | `cmd/httpdesk/env.go` | 环境与集合变量、`{{变量}}` 解析与高亮 |
 | `cmd/httpdesk/history.go` | 每个请求最近 20 次响应的保存、迁移、清理与对比 |

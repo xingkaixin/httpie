@@ -14,6 +14,8 @@ import (
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
+	"github.com/xingkaixin/mygo-native-ui/ui/hexview"
+	"github.com/xingkaixin/mygo-native-ui/ui/jsonview"
 	"github.com/xingkaixin/mygo-native-ui/ui/kvtable"
 	"github.com/xingkaixin/mygo-native-ui/ui/templatefield"
 	"github.com/xingkaixin/mygo-native-ui/ui/testresults"
@@ -78,6 +80,11 @@ type app struct {
 	tests          testresults.State
 	cmp            *comparison
 	timing         waterfall.State
+	bodyView       string
+	tree           jsonview.State
+	hex            hexview.State
+	web            *mygo.WebView
+	webShows       *response
 	bulk           bool
 	bodyHL         highlighter
 

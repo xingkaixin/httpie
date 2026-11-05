@@ -8,12 +8,14 @@ import (
 	"github.com/egoist/mygo/ui/editor"
 	"github.com/xingkaixin/mygo-native-ui/ui/jsondiff"
 	"github.com/xingkaixin/mygo-native-ui/ui/testresults"
+	"github.com/xingkaixin/mygo-native-ui/ui/waterfall"
 )
 
 const (
 	resBody = iota
 	resHeaders
 	resTests
+	resTiming
 	resRequest
 )
 
@@ -35,7 +37,7 @@ func (a *app) responsePane(c *ui.Context, r *request) {
 			if res != nil && len(res.Checks) > 0 {
 				tests = fmt.Sprintf("Tests %d/%d", passed(res.Checks), len(res.Checks))
 			}
-			ui.Segmented(c, &a.resTab, "Body", headers, tests, "Request").Label("响应内容")
+			ui.Segmented(c, &a.resTab, "Body", headers, tests, "Timing", "Request").Label("响应内容")
 			ui.Spacer(c)
 			if !shown {
 				return
@@ -97,6 +99,12 @@ func (a *app) responsePane(c *ui.Context, r *request) {
 			headersView(c, res)
 		case a.resTab == resTests:
 			a.testsView(c, res)
+		case a.resTab == resTiming:
+			if len(res.spans) == 0 {
+				ui.Column(c).Grow(1).Center().Children(func() { caption(c, "这次响应没有记录耗时") })
+			} else {
+				waterfall.View(c.Key("timing-"+r.ID), &a.timing, timingColumns, res.spans).Grow(1).Margin(0, 16, 16, 16)
+			}
 		case a.resTab == resRequest:
 			editor.View(c.Key("sent-"+r.ID), res.sentView).Grow(1).Margin(0, 16, 16, 16)
 		case a.cmp != nil && a.cmp.id == r.ID && a.cmp.new.is(res):
@@ -176,6 +184,7 @@ func passed(checks []check) int {
 func (res *response) buildViews() {
 	res.view = textView(res.Body, "响应 Body", res.JSON)
 	res.sentView = textView(res.Sent, "实际发出的请求", false)
+	res.spans = waterfallSpans(res.Timing)
 }
 
 // appendText adds text to the end of st, which follows it there unless

@@ -8,6 +8,7 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"net/http/httptrace"
 	"regexp"
 	"slices"
 	"strconv"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/egoist/mygo/netproxy"
 	"github.com/egoist/mygo/ui/editor"
+	"github.com/xingkaixin/mygo-native-ui/ui/waterfall"
 
 	"httpie/internal/core"
 )
@@ -48,6 +50,8 @@ type response struct {
 	Err       string
 	At        time.Time
 	Checks    []check `json:",omitempty"`
+	Timing    []span  `json:",omitempty"`
+	spans     []*waterfall.Span
 	view      *editor.State
 	sentView  *editor.State
 	streaming bool
@@ -197,6 +201,7 @@ func quoteWords(words []string) string {
 // recorder keeps each request of an exchange as sent, and the responses it
 // shows: the redirects, then the last one.
 type recorder struct {
+	timer   *timer
 	out     *core.Output
 	buf     bytes.Buffer
 	sent    []string
@@ -206,6 +211,7 @@ type recorder struct {
 
 // Request prints r now, as the exchange changes it in place for the next one.
 func (rec *recorder) Request(r *core.Request, _ bool) error {
+	rec.timer.begin(r.Method + " " + r.URL.Redacted())
 	rec.buf.Reset()
 	rec.out.WriteRequest(r, "H")
 	head := rec.buf.Len()
@@ -249,7 +255,7 @@ func exchange(ctx context.Context, args []string, jar []core.Cookie, progress fu
 	if err != nil {
 		return nil, err
 	}
-	rec := &recorder{}
+	rec := &recorder{timer: &timer{}}
 	if rec.out, err = core.NewOutput(&rec.buf, false, plain); err != nil {
 		return nil, err
 	}
@@ -263,6 +269,7 @@ func exchange(ctx context.Context, args []string, jar []core.Cookie, progress fu
 		return nil, err
 	}
 	start := time.Now()
+	ctx = httptrace.WithClientTrace(ctx, rec.timer.trace())
 	resp, err := ex.Do(ctx, rec)
 	if err != nil {
 		return nil, err
@@ -278,6 +285,8 @@ func exchange(ctx context.Context, args []string, jar []core.Cookie, progress fu
 	}
 	if media, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type")); media == "text/event-stream" {
 		streamBody(ctx, o, resp, res, progress)
+		res.Timing = rec.timer.spans(time.Now())
+		res.spans = waterfallSpans(res.Timing)
 		ex.Close()
 		resp.Body.Close()
 		return res, nil
@@ -293,7 +302,7 @@ func exchange(ctx context.Context, args []string, jar []core.Cookie, progress fu
 	if err != nil {
 		return nil, err
 	}
-	res.Size, res.Duration = len(data), time.Since(start)
+	res.Size, res.Duration, res.Timing = len(data), time.Since(start), rec.timer.spans(time.Now())
 	if decodeErr != nil {
 		res.Body = decodeErr.Error()
 		return res, nil

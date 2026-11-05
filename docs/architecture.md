@@ -13,7 +13,7 @@
 | `cmd/http`、`cmd/https`、`cmd/httpie` | 进程入口，退出码 |
 | `internal/core/options.go` | 参数定义、短参数组合、交错参数、重置语义 |
 | `request.go`、`items.go`、`json.go`、`uploads.go` | URL、请求项、嵌套 JSON、文件、表单、可重放的 multipart 正文 |
-| `transport.go`、`tls_openssl.go` | HTTP/1.1、代理、连接、空闲超时、OpenSSL TLS |
+| `transport.go`、`tls_openssl.go` | HTTP/1.1、代理、连接、空闲超时、OpenSSL TLS；向 context 中的 `httptrace` 报告各阶段 |
 | `exchange.go`、`auth.go`、`netrc.go` | 认证、重定向、请求重放；把每条消息交给观察者，返回最后的响应 |
 | `output.go`、`colors.go`、`xml.go`、`xml_colors.go` | 输出选择、格式化、颜色、编码、流处理；命令行输出是 exchange 的一个观察者 |
 | `session.go`、`cookies.go` | 配置目录、默认参数、会话和 Cookie 持久化、会话升级 |
@@ -30,6 +30,7 @@
 | `cmd/httpdesk/curl.go` | cURL 命令的导入与导出 |
 | `cmd/httpdesk/postman.go` | Postman 集合与环境的导入 |
 | `cmd/httpdesk/assert.go` | 响应检查规则的解析与执行 |
+| `cmd/httpdesk/timing.go` | 每一跳请求的 DNS、连接、TLS、发送、等待、接收耗时 |
 
 命令行实现均位于 `internal/`；桌面客户端的打包配置在根目录 `mygo.json`。没有公开库接口、插件框架或额外服务进程。
 

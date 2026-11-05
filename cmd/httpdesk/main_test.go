@@ -127,3 +127,25 @@ func TestCollectionInheritance(t *testing.T) {
 		t.Errorf("url %q headers %v", got.URL, got.Headers)
 	}
 }
+
+func TestTiming(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/old" {
+			http.Redirect(w, r, "/new", http.StatusFound)
+			return
+		}
+		io.WriteString(w, "ok")
+	}))
+	defer srv.Close()
+	res := send(context.Background(), requestArgs(newRequest("t", "GET", srv.URL+"/old")), nil, nil)
+	if len(res.Timing) != 2 || !strings.HasSuffix(res.Timing[1].Name, "/new") {
+		t.Fatalf("timing %+v", res.Timing)
+	}
+	var names []string
+	for _, p := range res.Timing[0].Phases {
+		names = append(names, p.Name)
+	}
+	if !slices.Equal(names, []string{"Connect", "Send", "Wait", "Receive"}) {
+		t.Errorf("phases %v", names)
+	}
+}

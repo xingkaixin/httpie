@@ -17,6 +17,7 @@ import (
 	"github.com/xingkaixin/mygo-native-ui/ui/kvtable"
 	"github.com/xingkaixin/mygo-native-ui/ui/templatefield"
 	"github.com/xingkaixin/mygo-native-ui/ui/testresults"
+	"github.com/xingkaixin/mygo-native-ui/ui/waterfall"
 )
 
 func icon(shapes string) *ui.SVG {
@@ -76,6 +77,7 @@ type app struct {
 	reqTab, resTab int
 	tests          testresults.State
 	cmp            *comparison
+	timing         waterfall.State
 	bulk           bool
 	bodyHL         highlighter
 

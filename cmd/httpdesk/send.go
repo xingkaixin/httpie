@@ -47,6 +47,7 @@ type response struct {
 	Cookies   []core.Cookie `json:"-"`
 	Err       string
 	At        time.Time
+	Checks    []check `json:",omitempty"`
 	view      *editor.State
 	sentView  *editor.State
 	streaming bool

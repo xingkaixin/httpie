@@ -16,6 +16,7 @@ import (
 	"github.com/egoist/mygo/ui"
 	"github.com/xingkaixin/mygo-native-ui/ui/kvtable"
 	"github.com/xingkaixin/mygo-native-ui/ui/templatefield"
+	"github.com/xingkaixin/mygo-native-ui/ui/testresults"
 )
 
 func icon(shapes string) *ui.SVG {
@@ -73,6 +74,7 @@ type app struct {
 	notice string
 
 	reqTab, resTab int
+	tests          testresults.State
 	bulk           bool
 	bodyHL         highlighter
 
@@ -404,10 +406,10 @@ func (a *app) requestPane(c *ui.Context, col *collection, r *request) {
 			if r.BodyType != bodyNone {
 				body += " · " + r.BodyType
 			}
-			if r.AuthType != authNone {
+			if r.AuthType != authNone && r.AuthType != authInherit {
 				auth += " · " + r.AuthType
 			}
-			ui.Segmented(c, &a.reqTab, withCount("Params", r.Params), withCount("Headers", r.Headers), body, auth, "Settings").Label("请求内容")
+			ui.Segmented(c, &a.reqTab, withCount("Params", r.Params), withCount("Headers", r.Headers), body, auth, withCount("Tests", r.Tests), "Settings").Label("请求内容")
 		})
 		switch a.reqTab {
 		case 0, 1:
@@ -437,6 +439,12 @@ func (a *app) requestPane(c *ui.Context, col *collection, r *request) {
 		case 3:
 			a.authEditor(c, col, r)
 		case 4:
+			ui.Scroll(c).Grow(1).Padding(0, 16, 16, 16).Children(func() {
+				kvtable.EditorWith(c.Key("tests-"+r.ID), &r.Tests, kvtable.Options{
+					KeyLabel: "检查", ValueLabel: "期望，如 2xx、< 500、exists", Keys: checkSubjects, Values: checkValues, Reorder: true,
+				})
+			})
+		case 5:
 			settingsEditor(c, r)
 		}
 	})
@@ -625,7 +633,7 @@ func (a *app) send() {
 		args = append(systemProxy(req.URL), args...)
 	}
 	// Variables go to the environment the request was sent with.
-	rules, envID := enabled(r.Extract), a.ws.Env
+	rules, envID, tests := enabled(r.Extract), a.ws.Env, slices.Clone(r.Tests)
 	var live *response
 	progress := func(p response, text string) {
 		a.win.Update(func() {
@@ -653,6 +661,9 @@ func (a *app) send() {
 		streamed := res.view != nil
 		if !streamed {
 			res.buildViews()
+		}
+		if res.Code != 0 {
+			res.Checks = runChecks(tests, res)
 		}
 		extracting := len(rules) > 0 && res.Code/100 == 2 && res.JSON && !res.Truncated
 		var vars []kvtable.Pair
@@ -776,7 +787,8 @@ func (a *app) moveRequest(from *collection, r *request, to *collection) {
 func (a *app) duplicate(col *collection, r *request) {
 	cp := *r
 	cp.ID, cp.Name = newID(), r.Name+" 副本"
-	cp.Params, cp.PathVars, cp.Headers, cp.Form, cp.Extract = slices.Clone(r.Params), slices.Clone(r.PathVars), slices.Clone(r.Headers), slices.Clone(r.Form), slices.Clone(r.Extract)
+	cp.Params, cp.PathVars, cp.Headers, cp.Form = slices.Clone(r.Params), slices.Clone(r.PathVars), slices.Clone(r.Headers), slices.Clone(r.Form)
+	cp.Extract, cp.Tests = slices.Clone(r.Extract), slices.Clone(r.Tests)
 	i := slices.Index(col.Requests, r)
 	col.Requests = slices.Insert(col.Requests, i+1, &cp)
 	a.ws.Selected = cp.ID

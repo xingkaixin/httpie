@@ -34,6 +34,8 @@ type request struct {
 	// Extract sets variables of the environment from the response, each
 	// key from the JSON path of its value.
 	Extract []kvtable.Pair `json:"extract,omitempty"`
+	// Tests are what runChecks checks of the response.
+	Tests []kvtable.Pair `json:"tests,omitempty"`
 }
 
 type auth struct {

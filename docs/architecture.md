@@ -29,6 +29,7 @@
 | `cmd/httpdesk/network.go` | 代理、CA 与按主机匹配的客户端证书 |
 | `cmd/httpdesk/curl.go` | cURL 命令的导入与导出 |
 | `cmd/httpdesk/postman.go` | Postman 集合与环境的导入 |
+| `cmd/httpdesk/assert.go` | 响应检查规则的解析与执行 |
 
 命令行实现均位于 `internal/`；桌面客户端的打包配置在根目录 `mygo.json`。没有公开库接口、插件框架或额外服务进程。
 

@@ -100,6 +100,15 @@ func requestArgs(r *request) []string {
 		opts = append(opts, "--auth-type=digest", "--auth="+r.User+":"+r.Password)
 	case authBearer:
 		opts = append(opts, "--auth-type=bearer", "--auth="+r.Token)
+	case authAPIKey:
+		if r.Key == "" {
+			break
+		}
+		if r.In == inQuery {
+			items = append(items, keySeparators.Replace(r.Key)+"=="+escapeFile(r.Token))
+		} else {
+			items = append(items, keySeparators.Replace(r.Key)+":"+r.Token)
+		}
 	}
 	if r.Follow {
 		opts = append(opts, "--follow")
@@ -111,12 +120,7 @@ func requestArgs(r *request) []string {
 		opts = append(opts, "--timeout="+strconv.FormatFloat(r.Timeout, 'f', -1, 64))
 	}
 	for _, p := range enabled(r.Params) {
-		v := p.Value
-		// "==@" would read the value from a file.
-		if strings.HasPrefix(v, "@") {
-			v = `\` + v
-		}
-		items = append(items, keySeparators.Replace(p.Key)+"=="+v)
+		items = append(items, keySeparators.Replace(p.Key)+"=="+escapeFile(p.Value))
 	}
 	contentType := false
 	for _, h := range enabled(r.Headers) {
@@ -159,6 +163,15 @@ func requestArgs(r *request) []string {
 		opts = append(opts, "--")
 	}
 	return append(opts, positional...)
+}
+
+// escapeFile escapes a value of a query item, which "==@" would read from
+// a file.
+func escapeFile(v string) string {
+	if strings.HasPrefix(v, "@") {
+		return `\` + v
+	}
+	return v
 }
 
 var shellSafe = regexp.MustCompile(`^[\w@%+=:,./-]+$`)

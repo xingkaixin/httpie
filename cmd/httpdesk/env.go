@@ -92,7 +92,7 @@ func (e *environment) resolve(r *request) *request {
 	// escapes once their variables are filled in. A query a variable
 	// brings goes as it is.
 	cp.URL, cp.Body, cp.BodyFile = e.fill(withQuery(r.URL, nil)), e.fill(r.Body), e.fill(r.BodyFile)
-	cp.User, cp.Password, cp.Token = e.fill(r.User), e.fill(r.Password), e.fill(r.Token)
+	cp.User, cp.Password, cp.Token, cp.Key = e.fill(r.User), e.fill(r.Password), e.fill(r.Token), e.fill(r.Key)
 	cp.Params, cp.Headers, cp.Form = e.fillPairs(r.Params), e.fillPairs(r.Headers), e.fillPairs(r.Form)
 	return &cp
 }

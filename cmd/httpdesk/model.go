@@ -40,6 +40,9 @@ type auth struct {
 	User     string `json:"user,omitempty"`
 	Password string `json:"password,omitempty"`
 	Token    string `json:"token,omitempty"`
+	// Key names the API key Token is, which goes In a header or the query.
+	Key string `json:"key,omitempty"`
+	In  string `json:"in,omitempty"`
 }
 
 type collection struct {
@@ -78,12 +81,17 @@ const (
 	authBasic   = "Basic"
 	authDigest  = "Digest"
 	authBearer  = "Bearer"
+	authAPIKey  = "API Key"
+
+	inHeader = "Header"
+	inQuery  = "Query"
 )
 
 var (
 	methods          = []string{"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"}
 	bodyTypes        = []string{bodyNone, bodyJSON, bodyText, bodyForm, bodyMultipart, bodyFile}
-	authTypes        = []string{authNone, authBasic, authDigest, authBearer}
+	authTypes        = []string{authNone, authBasic, authDigest, authBearer, authAPIKey}
+	keyPlaces        = []string{inHeader, inQuery}
 	requestAuthTypes = append([]string{authInherit}, authTypes...)
 	idSeq            atomic.Int64
 )

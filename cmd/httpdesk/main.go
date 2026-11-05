@@ -503,6 +503,13 @@ func (a *app) authFields(c *ui.Context, au *auth, types []string) {
 		ui.Field(c, "密码", func() { a.varInput(c, &au.Password).Password() })
 	case authBearer:
 		ui.Field(c, "Token", func() { a.varInput(c, &au.Token).Font("monospace") })
+	case authAPIKey:
+		if au.In == "" {
+			au.In = inHeader
+		}
+		ui.Field(c, "位置", func() { ui.Row(c).Children(func() { menuSelect(c, "位置", &au.In, keyPlaces) }) })
+		ui.Field(c, "名称", func() { a.varInput(c, &au.Key).Placeholder("X-API-Key").Font("monospace") })
+		ui.Field(c, "值", func() { a.varInput(c, &au.Token).Font("monospace") })
 	}
 }
 

@@ -315,7 +315,11 @@ func ansiC(w *strings.Builder, s string) (int, error) {
 // n connects; a line for each option, as API docs show them.
 func curlCommand(r *request, n *network) string {
 	base, query, _ := split(completeRaw(r.URL))
-	if extra := strings.TrimPrefix(withQuery("", r.Params), "?"); extra != "" {
+	params := r.Params
+	if r.AuthType == authAPIKey && r.In == inQuery && r.Key != "" {
+		params = append(slices.Clone(params), kvtable.Pair{On: true, Key: r.Key, Value: r.Token})
+	}
+	if extra := strings.TrimPrefix(withQuery("", params), "?"); extra != "" {
 		if query != "" {
 			query += "&"
 		}
@@ -351,6 +355,10 @@ func curlCommand(r *request, n *network) string {
 		opt("--digest", "-u", r.User+":"+r.Password)
 	case authBearer:
 		opt("-H", "Authorization: Bearer "+r.Token)
+	case authAPIKey:
+		if r.Key != "" && r.In != inQuery {
+			opt("-H", r.Key+": "+r.Token)
+		}
 	}
 	if hasBody {
 		switch r.BodyType {

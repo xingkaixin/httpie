@@ -75,6 +75,7 @@ type app struct {
 
 	reqTab, resTab int
 	tests          testresults.State
+	cmp            *comparison
 	bulk           bool
 	bodyHL         highlighter
 

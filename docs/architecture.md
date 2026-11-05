@@ -25,7 +25,7 @@
 | `cmd/httpdesk/response.go` | 响应面板与各视图 |
 | `cmd/httpdesk/send.go` | 请求转为参数、复制 http 命令、经 core 发送并格式化响应 |
 | `cmd/httpdesk/env.go` | 环境与集合变量、`{{变量}}` 解析与高亮 |
-| `cmd/httpdesk/history.go` | 每个请求最近 20 次响应的保存、迁移与清理 |
+| `cmd/httpdesk/history.go` | 每个请求最近 20 次响应的保存、迁移、清理与对比 |
 | `cmd/httpdesk/network.go` | 代理、CA 与按主机匹配的客户端证书 |
 | `cmd/httpdesk/curl.go` | cURL 命令的导入与导出 |
 | `cmd/httpdesk/postman.go` | Postman 集合与环境的导入 |

@@ -6,6 +6,7 @@ import (
 
 	"github.com/egoist/mygo/ui"
 	"github.com/egoist/mygo/ui/editor"
+	"github.com/xingkaixin/mygo-native-ui/ui/jsondiff"
 	"github.com/xingkaixin/mygo-native-ui/ui/testresults"
 )
 
@@ -46,6 +47,14 @@ func (a *app) responsePane(c *ui.Context, r *request) {
 							a.showEntry(r.ID, e)
 						}
 					}
+					m.Separator()
+					m.Submenu("与当前响应对比", func(sub *ui.Menu) {
+						for _, e := range hist {
+							if !e.is(res) && sub.Item(e.label()).Chosen() {
+								a.compare(r.ID, e, res)
+							}
+						}
+					})
 				})
 			}
 			if iconButton(c, iconCopy, "复制响应").Shrink(0).Clicked() {
@@ -90,6 +99,17 @@ func (a *app) responsePane(c *ui.Context, r *request) {
 			a.testsView(c, res)
 		case a.resTab == resRequest:
 			editor.View(c.Key("sent-"+r.ID), res.sentView).Grow(1).Margin(0, 16, 16, 16)
+		case a.cmp != nil && a.cmp.id == r.ID && a.cmp.new.is(res):
+			ui.Row(c).Padding(0, 16, 6, 16).Gap(8).AlignItems(ui.Center).Children(func() {
+				caption(c, a.cmp.old.label()+"  →  "+a.cmp.new.label())
+				ui.Spacer(c)
+				if ui.Button(c, "关闭对比").Clicked() {
+					a.cmp = nil
+				}
+			})
+			if a.cmp != nil {
+				jsondiff.View(c.Key("diff-"+r.ID), &a.cmp.state, a.cmp.diff).Grow(1).Margin(0, 16, 16, 16)
+			}
 		default:
 			if res.Err != "" {
 				caption(c, res.Err).Padding(0, 16, 6, 16)

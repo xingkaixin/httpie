@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/xingkaixin/mygo-native-ui/ui/jsondiff"
 )
 
 // maxHistory is how many responses a request keeps.
@@ -102,4 +104,49 @@ func pruneResponses(dir string, ws *workspace) {
 			os.Remove(path)
 		}
 	}
+}
+
+// comparison is a response of the history against the one shown.
+type comparison struct {
+	id       string
+	old, new entry
+	diff     *jsondiff.Diff
+	state    jsondiff.State
+}
+
+// diffDoc returns res as compare shows it: its status, headers and body,
+// as JSON when it is.
+func diffDoc(res *response) []byte {
+	headers := map[string]string{}
+	for _, h := range res.Headers {
+		name := strings.ToLower(h.Name)
+		if v, ok := headers[name]; ok {
+			h.Value = v + ", " + h.Value
+		}
+		headers[name] = h.Value
+	}
+	var body any = res.Body
+	if res.JSON && !res.Truncated {
+		body = json.RawMessage(res.Body)
+	}
+	data, _ := json.Marshal(struct {
+		Status  string            `json:"status"`
+		Headers map[string]string `json:"headers"`
+		Body    any               `json:"body"`
+	}{res.Status, headers, body})
+	return data
+}
+
+// compare shows how the response e of the history of the request id
+// differs from cur, the one shown.
+func (a *app) compare(id string, e entry, cur *response) {
+	go func() {
+		old := readResponse(filepath.Join(a.resDir, id, e.file()))
+		if old == nil {
+			a.win.Update(func() { a.notice = "无法读取这条历史响应" })
+			return
+		}
+		cmp := &comparison{id: id, old: e, new: entry{cur.At, cur.Code}, diff: jsondiff.Compare(diffDoc(old), diffDoc(cur))}
+		a.win.Update(func() { a.cmp, a.resTab = cmp, resBody })
+	}()
 }

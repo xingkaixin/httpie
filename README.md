@@ -54,6 +54,8 @@ http --offline example.org name=HTTPie count:=42
 
 ## 桌面客户端
 
+<img src="cmd/httpdesk/icon.png" width="128" alt="HTTP Desk 图标">
+
 `cmd/httpdesk` 是基于 [mygo](https://github.com/egoist/mygo) 的 HTTP Desk，把界面中的请求转换为 `http` 参数，经 `internal/core` 发送。构建依赖与 CLI 相同；因为使用 Cgo，只能在目标平台本机构建。
 
 ```sh
@@ -61,7 +63,7 @@ mise run dev
 mise exec -- go tool mygo build
 ```
 
-`dev` 以热重载运行；`build` 生成应用包，输出到 `build/`。集合、请求与环境保存在应用数据目录的 `workspace.json`。请求中可以用 `{{变量}}` 引用当前环境或所在集合的值；集合的认证、Header 和变量由其中的请求继承。“复制命令”给出等价的 `http` 或 cURL 命令。侧栏可以导入 Postman v2.0/v2.1 集合与环境，文件夹展开为“文件夹 / 请求”的名称，脚本不导入。请求的 Tests 检查状态码、耗时、Header、正文和 JSON 路径，如 `status` `2xx`、`$.data.id` `> 0`。响应 Body 可切换为 JSON 树、图片、HTML 预览或 Hex，预览不执行脚本、不加载外部资源。
+`dev` 以热重载运行；`build` 生成应用包，输出到 `build/`。应用图标取自 `cmd/httpdesk/icon.png`：1024×1024，图形居中占 824×824，四周透明，构建时转为 macOS 的 .icns 和 Windows 的图标资源。集合、请求与环境保存在应用数据目录的 `workspace.json`。请求中可以用 `{{变量}}` 引用当前环境或所在集合的值；集合的认证、Header 和变量由其中的请求继承。“复制命令”给出等价的 `http` 或 cURL 命令。侧栏可以导入 Postman v2.0/v2.1 集合与环境，文件夹展开为“文件夹 / 请求”的名称，脚本不导入。请求的 Tests 检查状态码、耗时、Header、正文和 JSON 路径，如 `status` `2xx`、`$.data.id` `> 0`。响应 Body 可切换为 JSON 树、图片、HTML 预览或 Hex，预览不执行脚本、不加载外部资源。
 
 ## 验证
 

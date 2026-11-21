@@ -638,11 +638,9 @@ func (a *app) send() {
 	ctx, cancel := context.WithCancel(context.Background())
 	a.inflight[r.ID] = cancel
 	req := scope{a.env(), col}.resolve(col.effective(r))
-	id, jar := r.ID, a.ws.Cookies
-	args := append(a.ws.Network.args(req.URL), requestArgs(req)...)
-	if a.ws.Network.ProxyMode == "" || a.ws.Network.ProxyMode == proxySystem {
-		args = append(systemProxy(req.URL), args...)
-	}
+	id, jar := r.ID, slices.Clone(a.ws.Cookies)
+	netCfg := a.ws.Network
+	args := append(netCfg.args(req.URL), requestArgs(req)...)
 	// Variables go to the environment the request was sent with.
 	rules, envID, tests := enabled(r.Extract), a.ws.Env, slices.Clone(r.Tests)
 	var live *response
@@ -661,6 +659,13 @@ func (a *app) send() {
 		})
 	}
 	go func() {
+		proxyArgs, ok := netCfg.sendProxyArgs(ctx, req.URL)
+		if !ok {
+			cancel()
+			a.win.Update(func() { delete(a.inflight, id) })
+			return
+		}
+		args = append(proxyArgs, args...)
 		res := send(ctx, args, jar, progress)
 		cancel()
 		if res == nil {

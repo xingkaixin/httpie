@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"net/url"
 	"path/filepath"
 	"slices"
@@ -71,6 +72,23 @@ func (n *network) args(rawURL string) []string {
 	return opts
 }
 
+func (n *network) sendProxyArgs(ctx context.Context, rawURL string) ([]string, bool) {
+	switch n.ProxyMode {
+	case "", proxySystem:
+		done := make(chan []string, 1)
+		go func() { done <- systemProxy(rawURL) }()
+		select {
+		case opts := <-done:
+			return opts, true
+		case <-ctx.Done():
+			return nil, false
+		}
+	case proxyNone:
+		return []string{"--proxy=no_proxy:*"}, true
+	}
+	return nil, true
+}
+
 func (n *network) cert(rawURL string) *clientCert {
 	u, err := completeURL(rawURL)
 	if err != nil {
@@ -106,6 +124,7 @@ func (a *app) networkDialog(c *ui.Context) {
 			})
 			ui.Field(c, "客户端证书", func() {
 				ui.Column(c).Gap(6).Children(func() {
+					remove := -1
 					for i := range n.Certs {
 						cert := &n.Certs[i]
 						ui.Row(c.Key(i)).Gap(6).AlignItems(ui.Center).Children(func() {
@@ -114,9 +133,12 @@ func (a *app) networkDialog(c *ui.Context) {
 							a.fileButton(c, &cert.Key, "私钥")
 							ui.Spacer(c)
 							if ui.Button(c, "移除").Clicked() {
-								n.Certs = slices.Delete(n.Certs, i, i+1)
+								remove = i
 							}
 						})
+					}
+					if remove >= 0 {
+						n.Certs = slices.Delete(n.Certs, remove, remove+1)
 					}
 					ui.Row(c).Children(func() {
 						if ui.Button(c, "添加证书").Clicked() {

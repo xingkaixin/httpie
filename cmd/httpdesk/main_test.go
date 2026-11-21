@@ -149,3 +149,23 @@ func TestTiming(t *testing.T) {
 		t.Errorf("phases %v", names)
 	}
 }
+
+func TestDirectProxyBypassesEnv(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, "direct")
+	}))
+	defer srv.Close()
+	t.Setenv("HTTP_PROXY", "http://127.0.0.1:1")
+	t.Setenv("http_proxy", "http://127.0.0.1:1")
+
+	n := &network{ProxyMode: proxyNone}
+	proxyArgs, ok := n.sendProxyArgs(context.Background(), srv.URL)
+	if !ok {
+		t.Fatal("sendProxyArgs canceled")
+	}
+	args := append(proxyArgs, append(n.args(srv.URL), requestArgs(newRequest("t", "GET", srv.URL))...)...)
+	res := send(context.Background(), args, nil, nil)
+	if res.Code != 200 || res.Body != "direct" {
+		t.Fatalf("got %d %q err=%q", res.Code, res.Body, res.Err)
+	}
+}

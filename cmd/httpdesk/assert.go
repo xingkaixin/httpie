@@ -176,3 +176,44 @@ func shorten(s string) string {
 	}
 	return s
 }
+
+func expectationForJSON(raw json.RawMessage) string {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || trimmed[0] == '{' || trimmed[0] == '[' {
+		return "exists"
+	}
+	var b bytes.Buffer
+	if json.Compact(&b, trimmed) != nil {
+		return "exists"
+	}
+	compact := b.String()
+	if compact[0] == '"' {
+		var s string
+		if json.Unmarshal(b.Bytes(), &s) == nil && s != "" && strings.TrimSpace(s) == s && !strings.ContainsAny(s, "\r\n") && !statusClass.MatchString(s) {
+			return "== " + s
+		}
+	}
+	return "== " + compact
+}
+
+func addTestForPath(r *request, res *response, path string) string {
+	var raw json.RawMessage
+	if res != nil && res.JSON && !res.Truncated {
+		raw, _ = lookup(json.RawMessage(res.Body), path)
+	}
+	expect := expectationForJSON(raw)
+	exists := false
+	for _, t := range r.Tests {
+		if t.On && strings.TrimSpace(t.Key) == path && strings.TrimSpace(t.Value) == expect {
+			exists = true
+			break
+		}
+	}
+	if !exists {
+		r.Tests = append(r.Tests, kvtable.Pair{On: true, Key: path, Value: expect})
+	}
+	if res != nil && res.Code != 0 {
+		res.Checks = runChecks(r.Tests, res)
+	}
+	return expect
+}

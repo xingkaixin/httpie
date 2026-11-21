@@ -32,3 +32,29 @@ func TestExtract(t *testing.T) {
 		t.Errorf("missing %q, want %q", missing, want)
 	}
 }
+
+func TestVarNameForPathAndEnsureExtractRule(t *testing.T) {
+	for _, tc := range []struct{ path, want string }{
+		{"$.data.token", "token"},
+		{"$.items[0].id", "id"},
+		{"$.items[0]", "items_0"},
+		{"$[0]", "item_0"},
+		{`$["a b"]`, "a_b"},
+		{`$["$id"]`, "id"},
+		{"$", "value"},
+	} {
+		if got := varNameForPath(tc.path); got != tc.want {
+			t.Errorf("%s: got %q, want %q", tc.path, got, tc.want)
+		}
+	}
+	r := newRequest("t", "GET", "example.org")
+	if got := ensureExtractRule(r, "$.a.id"); got != "id" {
+		t.Fatalf("first: %q", got)
+	}
+	if got := ensureExtractRule(r, "$.a.id"); got != "id" || len(r.Extract) != 1 {
+		t.Fatalf("repeat: %q len=%d", got, len(r.Extract))
+	}
+	if got := ensureExtractRule(r, "$.b.id"); got != "id_2" || len(r.Extract) != 2 {
+		t.Fatalf("collision: %q len=%d", got, len(r.Extract))
+	}
+}

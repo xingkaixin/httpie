@@ -15,6 +15,7 @@ import (
 	"github.com/xingkaixin/mygo-native-ui/ui/hexview"
 	"github.com/xingkaixin/mygo-native-ui/ui/jsondiff"
 	"github.com/xingkaixin/mygo-native-ui/ui/jsonview"
+	"github.com/xingkaixin/mygo-native-ui/ui/kvtable"
 	"github.com/xingkaixin/mygo-native-ui/ui/testresults"
 	"github.com/xingkaixin/mygo-native-ui/ui/waterfall"
 )
@@ -359,7 +360,12 @@ func (a *app) bodyPane(c *ui.Context, r *request, res *response) {
 	views := res.views()
 	switch views[max(slices.Index(views, a.bodyView), 0)] {
 	case viewTree:
-		jsonview.View(c.Key("tree-"+r.ID), &a.tree, res.tree).Grow(1).Margin(0, 16, 16, 16)
+		ui.Column(c).Grow(1).Children(func() {
+			jsonview.View(c.Key("tree-"+r.ID), &a.tree, res.tree).Grow(1).Margin(0, 16, 12, 16)
+			if path := a.tree.Path(); path != "" {
+				a.treeActionBar(c, r, res, path)
+			}
+		})
 	case viewHex:
 		hexview.View(c.Key("hex-"+r.ID), &a.hex, res.Raw).Grow(1).Margin(0, 16, 16, 16)
 	case viewPreview:
@@ -375,6 +381,39 @@ func (a *app) bodyPane(c *ui.Context, r *request, res *response) {
 	default:
 		editor.View(c.Key("res-"+r.ID), res.view).Grow(1).Margin(0, 16, 16, 16)
 	}
+}
+
+func (a *app) treeActionBar(c *ui.Context, r *request, res *response, path string) {
+	t := c.Theme()
+	ui.Row(c).Padding(8, 16, 12, 16).Gap(8).AlignItems(ui.Center).BorderWidth(1, 0, 0, 0).BorderColor(t.Border).Children(func() {
+		ui.Text(c, path).Font("monospace").FontSize(12).TextColor(t.TextMuted).SingleLine().Grow(1).Shrink(1)
+		if ui.Button(c, "加为断言").Shrink(0).Clicked() {
+			expect := addTestForPath(r, res, path)
+			c.ToastAction("已添加断言 "+path+" "+expect, "查看", func() { a.reqTab = 4 })
+		}
+		if ui.Button(c, "提取变量").Shrink(0).Clicked() {
+			name, wrote := a.addExtractForPath(r, res, path)
+			msg := "已添加提取规则 {{" + name + "}}"
+			if wrote {
+				msg = "已提取 {{" + name + "}} 并写入当前环境"
+			}
+			c.ToastAction(msg, "查看", func() { a.reqTab = 5 })
+		}
+	})
+}
+
+func (a *app) addExtractForPath(r *request, res *response, path string) (name string, wrote bool) {
+	name = ensureExtractRule(r, path)
+	env := a.env()
+	if env == nil || res == nil || res.Code/100 != 2 || !res.JSON || res.Truncated {
+		return name, false
+	}
+	vars, _ := extract(res.Body, []kvtable.Pair{{On: true, Key: name, Value: path}})
+	if len(vars) == 0 {
+		return name, false
+	}
+	env.set(vars[0].Key, vars[0].Value)
+	return name, true
 }
 
 // previewPolicy keeps an HTML preview from running scripts and loading

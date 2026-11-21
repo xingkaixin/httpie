@@ -31,3 +31,38 @@ func TestRunChecks(t *testing.T) {
 		}
 	}
 }
+
+func TestAddTestForPath(t *testing.T) {
+	res := &response{
+		Code: 200, JSON: true,
+		Body: `{"data": {"id": 42, "name": "kev", "empty": "", "padded": " x ", "cls": "2xx", "none": null, "tags": ["a"]}}`,
+	}
+	r := newRequest("t", "GET", "example.org")
+	cases := []struct{ path, want string }{
+		{"$.data.id", "== 42"},
+		{"$.data.name", "== kev"},
+		{"$.data.empty", `== ""`},
+		{"$.data.padded", `== " x "`},
+		{"$.data.cls", `== "2xx"`},
+		{"$.data.none", "== null"},
+		{"$.data.tags", "exists"},
+	}
+	for _, tc := range cases {
+		if got := addTestForPath(r, res, tc.path); got != tc.want {
+			t.Errorf("%s: got %q, want %q", tc.path, got, tc.want)
+		}
+	}
+	if len(r.Tests) != len(cases) || len(res.Checks) != len(cases) {
+		t.Fatalf("tests=%d checks=%d", len(r.Tests), len(res.Checks))
+	}
+	for _, ck := range res.Checks {
+		if !ck.Pass {
+			t.Errorf("check %q failed: %s", ck.Name, ck.Detail)
+		}
+	}
+	// Adding the same path again does not duplicate the rule.
+	addTestForPath(r, res, "$.data.id")
+	if len(r.Tests) != len(cases) {
+		t.Errorf("duplicate rule added: %d", len(r.Tests))
+	}
+}

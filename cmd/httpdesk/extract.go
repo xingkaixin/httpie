@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -83,4 +84,85 @@ func lookup(doc json.RawMessage, path string) (json.RawMessage, bool) {
 		}
 	}
 	return v, true
+}
+
+func varNameForPath(path string) string {
+	rest, ok := strings.CutPrefix(path, "$")
+	if !ok {
+		return "value"
+	}
+	var lastKey string
+	var trailing []string
+	for rest != "" {
+		switch {
+		case rest[0] == '.':
+			end := strings.IndexAny(rest[1:], ".[") + 1
+			if end == 0 {
+				end = len(rest)
+			}
+			lastKey, trailing, rest = rest[1:end], nil, rest[end:]
+		case strings.HasPrefix(rest, `["`):
+			var key string
+			d := json.NewDecoder(strings.NewReader(rest[1:]))
+			if d.Decode(&key) != nil {
+				return "value"
+			}
+			end := 1 + int(d.InputOffset())
+			if !strings.HasPrefix(rest[end:], "]") {
+				return "value"
+			}
+			lastKey, trailing, rest = key, nil, rest[end+1:]
+		case rest[0] == '[':
+			end := strings.IndexByte(rest, ']')
+			if end < 0 {
+				return "value"
+			}
+			trailing = append(trailing, rest[1:end])
+			rest = rest[end+1:]
+		default:
+			return "value"
+		}
+	}
+	base := sanitizeVarName(lastKey)
+	if base == "" {
+		if len(trailing) == 0 {
+			return "value"
+		}
+		base = "item"
+	}
+	if len(trailing) > 0 {
+		base += "_" + strings.Join(trailing, "_")
+	}
+	return base
+}
+
+func sanitizeVarName(s string) string {
+	var b strings.Builder
+	prevUnderscore := false
+	for _, r := range s {
+		ok := (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' || r == '.'
+		if ok {
+			b.WriteRune(r)
+			prevUnderscore = r == '_'
+		} else if !prevUnderscore {
+			b.WriteByte('_')
+			prevUnderscore = true
+		}
+	}
+	return strings.Trim(b.String(), "_.-")
+}
+
+func ensureExtractRule(r *request, path string) string {
+	for _, e := range r.Extract {
+		if e.On && strings.TrimSpace(e.Value) == path && e.Key != "" {
+			return e.Key
+		}
+	}
+	base := varNameForPath(path)
+	name := base
+	for n := 2; slices.ContainsFunc(r.Extract, func(e kvtable.Pair) bool { return e.Key == name }); n++ {
+		name = base + "_" + strconv.Itoa(n)
+	}
+	r.Extract = append(r.Extract, kvtable.Pair{On: true, Key: name, Value: path})
+	return name
 }

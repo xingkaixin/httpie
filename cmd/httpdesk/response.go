@@ -126,6 +126,7 @@ func (a *app) responsePane(c *ui.Context, r *request) {
 				ui.Spacer(c)
 				if ui.Button(c, "关闭对比").Clicked() {
 					a.cmp = nil
+					a.cmpSeq++
 				}
 			})
 			if a.cmp != nil {

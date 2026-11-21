@@ -13,6 +13,8 @@ import (
 	"testing"
 
 	"github.com/xingkaixin/mygo-native-ui/ui/kvtable"
+
+	"httpie/internal/core"
 )
 
 func TestSendRequest(t *testing.T) {
@@ -167,5 +169,27 @@ func TestDirectProxyBypassesEnv(t *testing.T) {
 	res := send(context.Background(), args, nil, nil)
 	if res.Code != 200 || res.Body != "direct" {
 		t.Fatalf("got %d %q err=%q", res.Code, res.Body, res.Err)
+	}
+}
+
+func TestMergeCookies(t *testing.T) {
+	dom := func(s string) *string { return &s }
+	a := core.Cookie{Name: "a", Value: "1", Domain: dom("a.example"), Path: "/"}
+	b := core.Cookie{Name: "b", Value: "1", Domain: dom("b.example"), Path: "/"}
+	c := core.Cookie{Name: "c", Value: "1", Domain: dom("c.example"), Path: "/"}
+	bNew := core.Cookie{Name: "b", Value: "2", Domain: dom("b.example"), Path: "/"}
+	d := core.Cookie{Name: "d", Value: "1", Domain: dom("d.example"), Path: "/"}
+
+	// Request 1 started with [a, b]; meanwhile Request 2 added c and updated b to bNew.
+	// Request 1 expired a and added d.
+	got := mergeCookies([]core.Cookie{a, bNew, c}, []core.Cookie{a, b}, []core.Cookie{b, d})
+	want := []core.Cookie{bNew, c, d}
+	if len(got) != len(want) {
+		t.Fatalf("got %+v, want %+v", got, want)
+	}
+	for i := range want {
+		if !cookieEqual(got[i], want[i]) {
+			t.Errorf("cookie %d: got %+v, want %+v", i, got[i], want[i])
+		}
 	}
 }

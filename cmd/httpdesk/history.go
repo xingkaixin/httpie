@@ -140,13 +140,23 @@ func diffDoc(res *response) []byte {
 // compare shows how the response e of the history of the request id
 // differs from cur, the one shown.
 func (a *app) compare(id string, e entry, cur *response) {
+	a.cmpSeq++
+	seq := a.cmpSeq
 	go func() {
 		old := readResponse(filepath.Join(a.resDir, id, e.file()))
 		if old == nil {
-			a.win.Update(func() { a.notice = "无法读取这条历史响应" })
+			a.win.Update(func() {
+				if a.cmpSeq == seq {
+					a.notice = "无法读取这条历史响应"
+				}
+			})
 			return
 		}
 		cmp := &comparison{id: id, old: e, new: entry{cur.At, cur.Code}, diff: jsondiff.Compare(diffDoc(old), diffDoc(cur))}
-		a.win.Update(func() { a.cmp, a.resTab = cmp, resBody })
+		a.win.Update(func() {
+			if a.cmpSeq == seq && a.responses[id] == cur {
+				a.cmp, a.resTab = cmp, resBody
+			}
+		})
 	}()
 }

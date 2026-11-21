@@ -20,6 +20,8 @@ import (
 	"github.com/xingkaixin/mygo-native-ui/ui/templatefield"
 	"github.com/xingkaixin/mygo-native-ui/ui/testresults"
 	"github.com/xingkaixin/mygo-native-ui/ui/waterfall"
+
+	"httpie/internal/core"
 )
 
 func icon(shapes string) *ui.SVG {
@@ -70,6 +72,8 @@ type app struct {
 	responses map[string]*response
 	history   map[string][]entry
 	inflight  map[string]context.CancelFunc
+	resSeq    map[string]int
+	cmpSeq    int
 	url       ui.Handle
 	synced    struct{ id, url string }
 	curl      string
@@ -353,7 +357,11 @@ func (a *app) cookieMenu(c *ui.Context) {
 		for _, ck := range a.ws.Cookies {
 			// core keeps a dotless host's cookies, as localhost's, under
 			// host.local, as Python's cookiejar does.
-			m.Item(ck.Name + " · " + strings.TrimSuffix(*ck.Domain, ".local")).Disabled(true)
+			domain := ""
+			if ck.Domain != nil {
+				domain = strings.TrimSuffix(*ck.Domain, ".local")
+			}
+			m.Item(ck.Name + " · " + domain).Disabled(true)
 		}
 		m.Separator()
 		if m.Item("清空 Cookie").Chosen() {
@@ -649,10 +657,11 @@ func (a *app) send() {
 			if live == nil {
 				live = &p
 				live.streaming = true
+				a.nextResSeq(id)
 				a.responses[id] = live
 				// A stream may stay open for long, so its cookies go in now,
 				// not over those set while it is open.
-				a.ws.Cookies = p.Cookies
+				a.ws.Cookies = mergeCookies(a.ws.Cookies, jar, p.Cookies)
 			}
 			live.Size, live.Duration = p.Size, p.Duration
 			appendText(live.view, text)
@@ -689,9 +698,10 @@ func (a *app) send() {
 		}
 		a.win.Update(func() {
 			delete(a.inflight, id)
+			a.nextResSeq(id)
 			a.responses[id] = res
 			if res.Code != 0 && !streamed {
-				a.ws.Cookies = res.Cookies
+				a.ws.Cookies = mergeCookies(a.ws.Cookies, jar, res.Cookies)
 			}
 			if extracting {
 				a.setVars(envID, vars, missing)
@@ -725,10 +735,19 @@ func (a *app) setVars(envID string, vars []kvtable.Pair, missing []string) {
 	}
 }
 
+func (a *app) nextResSeq(id string) int {
+	if a.resSeq == nil {
+		a.resSeq = map[string]int{}
+	}
+	a.resSeq[id]++
+	return a.resSeq[id]
+}
+
 // loadResponse shows the last response the request id had when the app
 // last ran, unless a send's comes first.
 func (a *app) loadResponse(id string) {
 	a.responses[id] = nil
+	seq := a.nextResSeq(id)
 	go func() {
 		hist := entries(filepath.Join(a.resDir, id))
 		var res *response
@@ -739,8 +758,10 @@ func (a *app) loadResponse(id string) {
 			res.buildViews()
 		}
 		a.win.Update(func() {
-			a.history[id] = hist
-			if res != nil && a.responses[id] == nil {
+			if a.resSeq[id] == seq || len(a.history[id]) == 0 {
+				a.history[id] = hist
+			}
+			if res != nil && a.resSeq[id] == seq && a.responses[id] == nil {
 				a.responses[id] = res
 			}
 		})
@@ -749,15 +770,80 @@ func (a *app) loadResponse(id string) {
 
 // showEntry shows the response e of the history of the request id.
 func (a *app) showEntry(id string, e entry) {
+	seq := a.nextResSeq(id)
 	go func() {
 		res := readResponse(filepath.Join(a.resDir, id, e.file()))
 		if res == nil {
-			a.win.Update(func() { a.notice = "无法读取这条历史响应" })
+			a.win.Update(func() {
+				if a.resSeq[id] == seq {
+					a.notice = "无法读取这条历史响应"
+				}
+			})
 			return
 		}
 		res.buildViews()
-		a.win.Update(func() { a.responses[id] = res })
+		a.win.Update(func() {
+			if a.resSeq[id] == seq {
+				a.responses[id] = res
+			}
+		})
 	}()
+}
+
+type cookieKey struct{ name, domain, path string }
+
+func keyOfCookie(c core.Cookie) cookieKey {
+	d := ""
+	if c.Domain != nil {
+		d = *c.Domain
+	}
+	return cookieKey{c.Name, d, c.Path}
+}
+
+func ptrEqual[T comparable](a, b *T) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
+}
+
+func cookieEqual(a, b core.Cookie) bool {
+	return a.Name == b.Name && a.Value == b.Value && a.Path == b.Path && a.Secure == b.Secure &&
+		ptrEqual(a.Domain, b.Domain) && ptrEqual(a.Expires, b.Expires)
+}
+
+// mergeCookies applies the changes from base to next onto current so
+// concurrent requests do not overwrite each other's cookies.
+func mergeCookies(current, base, next []core.Cookie) []core.Cookie {
+	baseMap := make(map[cookieKey]core.Cookie, len(base))
+	for _, c := range base {
+		baseMap[keyOfCookie(c)] = c
+	}
+	nextMap := make(map[cookieKey]core.Cookie, len(next))
+	for _, c := range next {
+		nextMap[keyOfCookie(c)] = c
+	}
+	out := slices.Clone(current)
+	out = slices.DeleteFunc(out, func(c core.Cookie) bool {
+		k := keyOfCookie(c)
+		if _, kept := nextMap[k]; kept {
+			return false
+		}
+		orig, had := baseMap[k]
+		return had && cookieEqual(c, orig)
+	})
+	for _, c := range next {
+		k := keyOfCookie(c)
+		if orig, had := baseMap[k]; had && cookieEqual(c, orig) {
+			continue
+		}
+		if i := slices.IndexFunc(out, func(x core.Cookie) bool { return keyOfCookie(x) == k }); i >= 0 {
+			out[i] = c
+		} else {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 // chooseFile shows a dialog choosing a file, and calls set with its path.

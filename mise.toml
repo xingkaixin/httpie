@@ -8,6 +8,14 @@ CGO_ENABLED = "1"
 description = "Build the three CLI commands"
 run = "go build -trimpath -o bin/ ./cmd/http ./cmd/https ./cmd/httpie"
 
+[tasks."build:mac"]
+description = "Build the macOS desktop app (run on macOS)"
+run = 'go tool mygo build -platform "darwin/$(go env GOARCH)"'
+
+[tasks."build:win"]
+description = "Build the Windows desktop app (run on Windows MSYS2 UCRT64)"
+run = "go tool mygo build -platform windows/amd64"
+
 [tasks.dev]
 description = "Run the desktop app with live reload"
 run = "go tool mygo dev"

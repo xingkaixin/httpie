@@ -232,8 +232,11 @@ func responseHeaders(raw []Header) []Header {
 	return append(result, cookies...)
 }
 func DecodedBody(r *http.Response) (io.Reader, func(), error) {
+	if r.Header.Get("Content-Encoding") == "" {
+		return r.Body, func() {}, nil
+	}
 	var reader io.Reader = r.Body
-	buffer := bufio.NewReader(reader)
+	buffer := bufio.NewReaderSize(reader, 64*1024)
 	if _, err := buffer.Peek(1); err == io.EOF {
 		return buffer, func() {}, nil
 	}

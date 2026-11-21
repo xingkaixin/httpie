@@ -256,7 +256,7 @@ func (t *transport) connect(ctx context.Context, u, proxyURL *url.URL) error {
 	}
 	t.conn = conn
 	t.cancel = stop
-	t.reader = bufio.NewReader(conn)
+	t.reader = bufio.NewReaderSize(conn, 64*1024)
 	t.target = target
 	return nil
 }
@@ -299,7 +299,7 @@ func (t *transport) send(ctx context.Context, r *Request) (*http.Response, []Hea
 		u.Fragment = ""
 		uri = u.String()
 	}
-	w := bufio.NewWriter(t.conn)
+	w := bufio.NewWriterSize(t.conn, 64*1024)
 	if _, err = fmt.Fprintf(w, "%s %s HTTP/1.1\r\n", r.Method, uri); err != nil {
 		return nil, nil, err
 	}
@@ -323,7 +323,7 @@ func (t *transport) send(ctx context.Context, r *Request) (*http.Response, []Hea
 	}
 	if r.Body != nil {
 		if len(r.TransferEncoding) > 0 && r.TransferEncoding[0] == "chunked" {
-			buf := make([]byte, 32*1024)
+			buf := make([]byte, 64*1024)
 			for {
 				n, e := r.Body.Read(buf)
 				if n > 0 {

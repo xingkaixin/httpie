@@ -89,13 +89,23 @@ static httpie_ssl *httpie_connection(SSL_CTX *ctx, const char *host, int is_ip) 
     return connection;
 }
 
-static int httpie_step(httpie_ssl *connection, int operation, void *data, int length, int *result) {
+static int httpie_step(httpie_ssl *connection, int operation, void *data, int length,
+                       void *out, int out_cap, int *out_len, int *result) {
     ERR_clear_error();
     int value;
     if (operation == 0) value = SSL_do_handshake(connection->ssl);
     else if (operation == 1) value = SSL_read(connection->ssl, data, length);
     else value = SSL_write(connection->ssl, data, length);
     *result = value;
+    BIO *wbio = SSL_get_wbio(connection->ssl);
+    size_t pending = BIO_ctrl_pending(wbio);
+    if (pending > 0 && out_cap > 0) {
+        int want = pending < (size_t)out_cap ? (int)pending : out_cap;
+        int n = BIO_read(wbio, out, want);
+        *out_len = n > 0 ? n : 0;
+    } else {
+        *out_len = 0;
+    }
     if (value > 0) return SSL_ERROR_NONE;
     int error = SSL_get_error(connection->ssl, value);
     if (error != SSL_ERROR_WANT_READ && error != SSL_ERROR_WANT_WRITE && error != SSL_ERROR_ZERO_RETURN)
@@ -268,10 +278,19 @@ func (s *tlsSettings) connect(ctx context.Context, conn net.Conn, host string) (
 	return secured, nil
 }
 
+const (
+	tlsReadBufSize  = 64 * 1024
+	tlsWriteBufSize = 72 * 1024
+)
+
 type opensslConn struct {
 	net.Conn
-	mutex sync.Mutex
-	state *C.httpie_ssl
+	mutex  sync.Mutex
+	opMu   sync.Mutex
+	state  *C.httpie_ssl
+	inBuf  []byte
+	outBuf []byte
+	extra  []byte
 }
 
 func (c *opensslConn) Close() error {
@@ -297,31 +316,42 @@ func (c *opensslConn) Write(data []byte) (int, error) {
 	return c.operate(2, data)
 }
 func (c *opensslConn) operate(operation int, data []byte) (int, error) {
+	c.opMu.Lock()
+	defer c.opMu.Unlock()
 	var pointer unsafe.Pointer
 	if len(data) > 0 {
 		pointer = unsafe.Pointer(&data[0])
 	}
-	buffer := make([]byte, 32*1024)
+	if c.outBuf == nil {
+		c.outBuf = make([]byte, tlsWriteBufSize)
+	}
 	for {
 		c.mutex.Lock()
 		if c.state == nil {
 			c.mutex.Unlock()
 			return 0, net.ErrClosed
 		}
-		var result C.int
-		status := C.httpie_step(c.state, C.int(operation), pointer, C.int(len(data)), &result)
-		message := C.GoString(&c.state.error[0])
-		var output []byte
-		for {
-			n := int(C.httpie_drain(c.state, unsafe.Pointer(&buffer[0]), C.int(len(buffer))))
-			if n <= 0 {
-				break
+		var result, outLen C.int
+		status := C.httpie_step(c.state, C.int(operation), pointer, C.int(len(data)), unsafe.Pointer(&c.outBuf[0]), C.int(len(c.outBuf)), &outLen, &result)
+		var message string
+		if status != C.SSL_ERROR_NONE && status != C.SSL_ERROR_ZERO_RETURN && status != C.SSL_ERROR_WANT_READ && status != C.SSL_ERROR_WANT_WRITE {
+			message = C.GoString(&c.state.error[0])
+		}
+		output := c.outBuf[:int(outLen)]
+		if int(outLen) == len(c.outBuf) {
+			c.extra = append(c.extra[:0], output...)
+			for {
+				n := int(C.httpie_drain(c.state, unsafe.Pointer(&c.outBuf[0]), C.int(len(c.outBuf))))
+				if n <= 0 {
+					break
+				}
+				c.extra = append(c.extra, c.outBuf[:n]...)
 			}
-			output = append(output, buffer[:n]...)
+			output = c.extra
 		}
 		c.mutex.Unlock()
 		if len(output) > 0 {
-			if _, err := io.Copy(c.Conn, bytes.NewReader(output)); err != nil {
+			if _, err := c.Conn.Write(output); err != nil {
 				return 0, err
 			}
 		}
@@ -333,14 +363,17 @@ func (c *opensslConn) operate(operation int, data []byte) (int, error) {
 		case C.SSL_ERROR_WANT_WRITE:
 			continue
 		case C.SSL_ERROR_WANT_READ:
-			n, err := c.Conn.Read(buffer)
+			if c.inBuf == nil {
+				c.inBuf = make([]byte, tlsReadBufSize)
+			}
+			n, err := c.Conn.Read(c.inBuf)
 			if n > 0 {
 				c.mutex.Lock()
 				if c.state == nil {
 					c.mutex.Unlock()
 					return 0, net.ErrClosed
 				}
-				C.httpie_feed(c.state, unsafe.Pointer(&buffer[0]), C.int(n))
+				C.httpie_feed(c.state, unsafe.Pointer(&c.inBuf[0]), C.int(n))
 				c.mutex.Unlock()
 			}
 			if err != nil {

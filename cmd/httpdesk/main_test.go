@@ -229,3 +229,37 @@ func TestMatchesRequest(t *testing.T) {
 		}
 	}
 }
+
+func TestSuggestFilename(t *testing.T) {
+	tests := []struct {
+		url  string
+		res  response
+		want string
+	}{
+		{
+			"https://api.example.com/download",
+			response{Headers: []core.Header{{Name: "Content-Disposition", Value: `attachment; filename="report.pdf"`}}},
+			"report.pdf",
+		},
+		{
+			"https://api.example.com/v1/users?page=1",
+			response{Headers: []core.Header{{Name: "Content-Type", Value: "application/json; charset=utf-8"}}, JSON: true},
+			"users.json",
+		},
+		{
+			"https://example.com/",
+			response{Headers: []core.Header{{Name: "Content-Type", Value: "image/png"}}, Raw: []byte{0}},
+			"response.png",
+		},
+		{
+			"https://example.com/assets/logo.svg",
+			response{Headers: []core.Header{{Name: "Content-Type", Value: "image/svg+xml"}}},
+			"logo.svg",
+		},
+	}
+	for _, tc := range tests {
+		if got := suggestFilename(tc.url, &tc.res); got != tc.want {
+			t.Errorf("%s: got %q, want %q", tc.url, got, tc.want)
+		}
+	}
+}

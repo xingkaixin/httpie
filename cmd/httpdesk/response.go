@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"mime"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -38,6 +40,9 @@ func (a *app) responsePane(c *ui.Context, r *request) {
 	if searchable && c.Shortcut(ui.Cmd, ui.KeyF) {
 		a.findInResponse(res)
 	}
+	if shown && c.Shortcut(ui.Cmd, ui.KeyS) {
+		a.saveResponseToFile(r, res)
+	}
 	ui.Column(c).Fill().Children(func() {
 		ui.Row(c).Padding(10, 16).Gap(4).AlignItems(ui.Center).Children(func() {
 			headers, tests := "Headers", "Tests"
@@ -71,6 +76,9 @@ func (a *app) responsePane(c *ui.Context, r *request) {
 						}
 					})
 				})
+			}
+			if iconButton(c, iconDownload, "保存响应 ⌘S").Shrink(0).Clicked() {
+				a.saveResponseToFile(r, res)
 			}
 			if iconButton(c, iconCopy, "复制响应").Shrink(0).Clicked() {
 				c.WriteClipboard(res.view.Buffer.String())
@@ -170,6 +178,108 @@ func (a *app) findInResponse(res *response) {
 		a.bodyView = viewText
 	}
 	res.view.Run(editor.Find)
+}
+
+func (a *app) saveResponseToFile(r *request, res *response) {
+	if a.win == nil || res == nil {
+		return
+	}
+	data := []byte(res.Body)
+	if res.Raw != nil {
+		data = slices.Clone(res.Raw)
+	}
+	truncated := res.Truncated
+	name := suggestFilename(r.URL, res)
+	go func() {
+		path, err := mygo.Dialog.Save(mygo.SaveDialogOptions{
+			Parent:      a.win,
+			Title:       "保存响应",
+			DefaultPath: name,
+		})
+		if err != nil || path == "" {
+			return
+		}
+		if err := os.WriteFile(path, data, 0o644); err != nil {
+			a.win.Update(func() { a.notice = "保存失败：" + err.Error() })
+			return
+		}
+		note := "已保存到 " + filepath.Base(path)
+		if truncated {
+			note = "已保存前 10 MB 到 " + filepath.Base(path)
+		}
+		a.win.Update(func() { a.notice = note })
+	}()
+}
+
+func suggestFilename(rawURL string, res *response) string {
+	for _, h := range res.Headers {
+		if strings.EqualFold(h.Name, "Content-Disposition") {
+			if _, params, err := mime.ParseMediaType(h.Value); err == nil {
+				if name := filepath.Base(strings.TrimSpace(params["filename"])); name != "" && name != "." && name != ".." && name != string(filepath.Separator) {
+					return name
+				}
+			}
+		}
+	}
+	base := "response"
+	if u, err := completeURL(rawURL); err == nil {
+		if name := filepath.Base(strings.TrimRight(u.Path, "/")); name != "" && name != "." && name != "/" {
+			base = name
+		}
+	}
+	if filepath.Ext(base) == "" {
+		base += responseExt(res)
+	}
+	return base
+}
+
+func responseExt(res *response) string {
+	for _, h := range res.Headers {
+		if !strings.EqualFold(h.Name, "Content-Type") {
+			continue
+		}
+		media, _, _ := mime.ParseMediaType(h.Value)
+		switch {
+		case media == "application/json" || strings.HasSuffix(media, "+json"):
+			return ".json"
+		case media == "text/html":
+			return ".html"
+		case media == "text/plain":
+			return ".txt"
+		case media == "application/xml" || media == "text/xml" || strings.HasSuffix(media, "+xml"):
+			return ".xml"
+		case media == "text/css":
+			return ".css"
+		case media == "text/javascript" || media == "application/javascript":
+			return ".js"
+		case media == "text/csv":
+			return ".csv"
+		case media == "image/png":
+			return ".png"
+		case media == "image/jpeg":
+			return ".jpg"
+		case media == "image/webp":
+			return ".webp"
+		case media == "image/gif":
+			return ".gif"
+		case media == "image/svg+xml":
+			return ".svg"
+		case media == "application/pdf":
+			return ".pdf"
+		case media == "application/zip":
+			return ".zip"
+		}
+		if exts, err := mime.ExtensionsByType(media); err == nil && len(exts) > 0 {
+			return exts[0]
+		}
+	}
+	if res.JSON {
+		return ".json"
+	}
+	if res.Raw != nil {
+		return ".bin"
+	}
+	return ".txt"
 }
 
 func headersView(c *ui.Context, res *response) {

@@ -1,9 +1,13 @@
 package main
 
 import (
+	"encoding/json"
+	"slices"
 	"unicode"
 
 	"github.com/egoist/mygo/ui"
+	"github.com/xingkaixin/mygo-native-ui/ui/kvtable"
+	"github.com/xingkaixin/mygo-native-ui/ui/templatefield"
 )
 
 type tokenKind int
@@ -92,12 +96,22 @@ func colorRanges(tokens []token, p palette) []ui.TextRange {
 	return out
 }
 
-// highlighter caches the ranges of one text, which a frame asks for again
-// and again while nothing changes.
+// highlighter caches the ranges and validation of one body text, which a
+// frame asks for again and again while nothing changes.
 type highlighter struct {
-	text   string
-	dark   bool
-	cached []ui.TextRange
+	text        string
+	dark        bool
+	cached      []ui.TextRange
+	validInit   bool
+	validText   string
+	rawValid    bool
+	scopeInit   bool
+	scopeText   string
+	scopeDark   bool
+	envVars     []kvtable.Pair
+	colVars     []kvtable.Pair
+	filledValid bool
+	varRanges   []ui.TextRange
 }
 
 func (h *highlighter) ranges(t *ui.Theme, text string) []ui.TextRange {
@@ -106,4 +120,30 @@ func (h *highlighter) ranges(t *ui.Theme, text string) []ui.TextRange {
 		h.cached = colorRanges(jsonTokens(text), jsonPalette(t))
 	}
 	return h.cached
+}
+
+func (h *highlighter) syncScope(t *ui.Theme, text string, sc scope) {
+	if h.scopeInit && text == h.scopeText && t.Dark == h.scopeDark && slices.Equal(h.envVars, sc.envVars()) && slices.Equal(h.colVars, sc.colVars()) {
+		return
+	}
+	h.scopeInit = true
+	h.scopeText, h.scopeDark = text, t.Dark
+	h.envVars, h.colVars = slices.Clone(sc.envVars()), slices.Clone(sc.colVars())
+	h.varRanges = templatefield.Ranges(text, sc, t)
+	if !h.validInit || text != h.validText {
+		h.validInit = true
+		h.validText = text
+		h.rawValid = json.Valid([]byte(text))
+	}
+	h.filledValid = h.rawValid || text == "" || json.Valid([]byte(sc.fill(text)))
+}
+
+func (h *highlighter) jsonValid(t *ui.Theme, text string, sc scope) (raw, asSent bool) {
+	h.syncScope(t, text, sc)
+	return h.rawValid, h.filledValid
+}
+
+func (h *highlighter) templateRanges(t *ui.Theme, text string, sc scope) []ui.TextRange {
+	h.syncScope(t, text, sc)
+	return h.varRanges
 }

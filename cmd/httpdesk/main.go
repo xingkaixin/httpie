@@ -579,6 +579,7 @@ func (a *app) pathVarsEditor(c *ui.Context, r *request) {
 
 func (a *app) bodyEditor(c *ui.Context, r *request) {
 	t := c.Theme()
+	sc := a.scope()
 	ui.Column(c).Grow(1).Padding(0, 16, 16, 16).Gap(8).Children(func() {
 		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 			menuSelect(c, "Body 类型", &r.BodyType, bodyTypes)
@@ -586,8 +587,8 @@ func (a *app) bodyEditor(c *ui.Context, r *request) {
 			if r.BodyType == bodyJSON {
 				// Variables may stand for values, as in {"id": {{id}}}, so the body is
 				// checked as sent; formatting works on it as written.
-				valid := json.Valid([]byte(r.Body))
-				if !valid && r.Body != "" && !json.Valid([]byte(a.scope().fill(r.Body))) {
+				valid, asSent := a.bodyHL.jsonValid(t, r.Body, sc)
+				if !asSent {
 					ui.Text(c, "JSON 格式有误").FontSize(12).TextColor(t.Danger)
 				}
 				ui.Button(c, "格式化").Disabled(!valid).OnClick(func() {
@@ -604,7 +605,7 @@ func (a *app) bodyEditor(c *ui.Context, r *request) {
 		case bodyForm, bodyMultipart:
 			ui.Scroll(c).Grow(1).Children(func() {
 				kvtable.EditorWith(c.Key("form-"+r.ID), &r.Form, kvtable.Options{
-					KeyLabel: "字段", ValueLabel: "值", Kinds: formKinds, Choose: a.chooseFile, Ranges: a.scope().ranges(c.Theme()), Reorder: true,
+					KeyLabel: "字段", ValueLabel: "值", Kinds: formKinds, Choose: a.chooseFile, Ranges: sc.ranges(c.Theme()), Reorder: true,
 				})
 			})
 		case bodyFile:
@@ -622,7 +623,7 @@ func (a *app) bodyEditor(c *ui.Context, r *request) {
 			if r.BodyType == bodyJSON {
 				ed.Placeholder("{\n  \"key\": \"value\"\n}").TextRanges(a.bodyHL.ranges(t, r.Body)...)
 			}
-			ed.TextRanges(templatefield.Ranges(r.Body, a.scope(), t)...)
+			ed.TextRanges(a.bodyHL.templateRanges(t, r.Body, sc)...)
 		}
 	})
 }

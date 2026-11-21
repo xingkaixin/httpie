@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -203,11 +204,16 @@ func TestWriteFileAtomic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if perm := info.Mode().Perm(); perm != 0o600 {
-		t.Errorf("perm = %o, want 600", perm)
+	if runtime.GOOS != "windows" {
+		if perm := info.Mode().Perm(); perm != 0o600 {
+			t.Errorf("perm = %o, want 600", perm)
+		}
+	}
+	if err := writeFileAtomic(path, []byte(`{"ok":2}`)); err != nil {
+		t.Fatal(err)
 	}
 	got, err := os.ReadFile(path)
-	if err != nil || string(got) != `{"ok":true}` {
+	if err != nil || string(got) != `{"ok":2}` {
 		t.Fatalf("read %q %v", got, err)
 	}
 }

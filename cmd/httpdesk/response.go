@@ -34,6 +34,10 @@ func (a *app) responsePane(c *ui.Context, r *request) {
 	_, sending := a.inflight[r.ID]
 	waiting := sending && (res == nil || !res.streaming)
 	shown := res != nil && res.Code != 0 && !waiting
+	searchable := shown && a.canFind(r, res)
+	if searchable && c.Shortcut(ui.Cmd, ui.KeyF) {
+		a.findInResponse(res)
+	}
 	ui.Column(c).Fill().Children(func() {
 		ui.Row(c).Padding(10, 16).Gap(4).AlignItems(ui.Center).Children(func() {
 			headers, tests := "Headers", "Tests"
@@ -47,6 +51,9 @@ func (a *app) responsePane(c *ui.Context, r *request) {
 			ui.Spacer(c)
 			if !shown {
 				return
+			}
+			if searchable && iconButton(c, iconSearch, "查找 ⌘F").Shrink(0).Clicked() {
+				a.findInResponse(res)
 			}
 			if hist := a.history[r.ID]; len(hist) > 1 {
 				iconButton(c, iconHistory, "历史响应").Shrink(0).Menu(func(m *ui.Menu) {
@@ -142,6 +149,27 @@ func (a *app) responsePane(c *ui.Context, r *request) {
 			a.bodyPane(c, r, res)
 		}
 	})
+}
+
+func (a *app) canFind(r *request, res *response) bool {
+	if a.resTab == resRequest {
+		return res.sentView != nil
+	}
+	comparing := a.cmp != nil && a.cmp.id == r.ID && a.cmp.new.is(res)
+	return a.resTab == resBody && !comparing && res.Raw == nil && res.view != nil
+}
+
+func (a *app) findInResponse(res *response) {
+	if a.resTab == resRequest {
+		res.sentView.Run(editor.Find)
+		return
+	}
+	if res.html {
+		a.bodyView = viewSource
+	} else {
+		a.bodyView = viewText
+	}
+	res.view.Run(editor.Find)
 }
 
 func headersView(c *ui.Context, res *response) {

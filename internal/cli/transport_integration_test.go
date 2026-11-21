@@ -103,3 +103,29 @@ func TestHeadersDoNotWaitForBody(t *testing.T) {
 		t.Fatalf("%d %q %s", code, body, diagnostic)
 	}
 }
+
+func TestOversizedHeaderLineFailsWithoutNewline(t *testing.T) {
+	cli := isolatedCLI(t)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		_, _ = conn.Write([]byte("HTTP/1.1 200 OK\r\nX-Big: " + strings.Repeat("a", 70000)))
+		time.Sleep(time.Second)
+	}()
+	start := time.Now()
+	code, _, diagnostic := cli("--timeout=2", "http://"+ln.Addr().String())
+	if time.Since(start) > 500*time.Millisecond {
+		t.Fatal("oversized header line waited for newline or timeout")
+	}
+	if code == 0 || !strings.Contains(diagnostic, "exceeds 65536 bytes") {
+		t.Fatalf("%d %s", code, diagnostic)
+	}
+}

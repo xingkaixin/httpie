@@ -381,12 +381,9 @@ func (t *transport) send(ctx context.Context, r *Request) (*http.Response, []Hea
 		var raw bytes.Buffer
 		var headers []Header
 		for lineNumber := 0; ; lineNumber++ {
-			line, e := t.reader.ReadString('\n')
+			line, e := readHeaderLine(t.reader, 65536)
 			if e != nil {
 				return nil, nil, e
-			}
-			if len(line) > 65536 {
-				return nil, nil, fmt.Errorf("response header line exceeds 65536 bytes")
 			}
 			if max := t.options.Integer("max-headers"); max != 0 && lineNumber > max {
 				return nil, nil, fmt.Errorf("got more than %d headers", max)
@@ -417,6 +414,27 @@ func (t *transport) send(ctx context.Context, r *Request) (*http.Response, []Hea
 			continue
 		}
 		return response, headers, nil
+	}
+}
+
+func readHeaderLine(r *bufio.Reader, limit int) (string, error) {
+	var line []byte
+	for {
+		chunk, err := r.ReadSlice('\n')
+		if len(line)+len(chunk) > limit || err == bufio.ErrBufferFull && len(line)+len(chunk) >= limit {
+			return "", fmt.Errorf("response header line exceeds %d bytes", limit)
+		}
+		if err == nil {
+			if len(line) == 0 {
+				return string(chunk), nil
+			}
+			line = append(line, chunk...)
+			return string(line), nil
+		}
+		if err != bufio.ErrBufferFull {
+			return "", err
+		}
+		line = append(line, chunk...)
 	}
 }
 

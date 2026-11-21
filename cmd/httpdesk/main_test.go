@@ -211,3 +211,21 @@ func TestWriteFileAtomic(t *testing.T) {
 		t.Fatalf("read %q %v", got, err)
 	}
 }
+
+func TestMatchesRequest(t *testing.T) {
+	r := newRequest("Create User", "POST", "https://api.example.com/v1/users")
+	for _, tc := range []struct {
+		query string
+		want  bool
+	}{
+		{"post users", true},
+		{"auth create", true},
+		{"API.EXAMPLE", true},
+		{"get users", false},
+		{"missing", false},
+	} {
+		if got := matchesRequest(tc.query, "Auth", r); got != tc.want {
+			t.Errorf("query %q: got %v, want %v", tc.query, got, tc.want)
+		}
+	}
+}

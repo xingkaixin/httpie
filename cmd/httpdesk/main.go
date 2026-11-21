@@ -81,6 +81,8 @@ type app struct {
 	resSeq      map[string]int
 	cmpSeq      int
 	url         ui.Handle
+	search      ui.Handle
+	query       string
 	synced      struct{ id, url string }
 	curl        string
 	// notice is a toast for the next frame, from a goroutine's Update.
@@ -311,6 +313,9 @@ func (a *app) view(c *ui.Context) {
 	if c.Shortcut(ui.Cmd, ui.KeyN) {
 		a.newRequest(nil)
 	}
+	if c.Shortcut(ui.Cmd, ui.KeyK) {
+		a.search.Focus()
+	}
 	if _, r := a.ws.find(a.ws.Selected); r != nil && c.Shortcut(ui.Cmd, ui.KeyL) {
 		a.url.Focus()
 	}
@@ -344,6 +349,8 @@ func (a *app) sidebar(c *ui.Context) {
 	t := c.Theme()
 	var action func()
 	bar := c.TitleBar()
+	q := strings.TrimSpace(a.query)
+	submitted := false
 	ui.Column(c).Width(250).Children(func() {
 		ui.Row(c).Height(max(bar.Height, 44)).Padding(0, 10, 0, bar.Left).Gap(2).AlignItems(ui.Center).DragWindow().Children(func() {
 			ui.Spacer(c)
@@ -352,10 +359,51 @@ func (a *app) sidebar(c *ui.Context) {
 			iconButton(c, iconImport, "导入 Postman 集合或环境").OnClick(a.importFiles)
 			iconButton(c, iconGlobe, "网络设置").OnClick(func() { a.networkOpen = true })
 		})
+		ui.Row(c).Padding(0, 10, 6, 10).Children(func() {
+			if ui.SearchField(c, &a.query).Bind(&a.search).Placeholder("搜索请求 ⌘K").Label("搜索请求").Grow(1).Submitted() {
+				submitted = true
+			}
+		})
+		var firstMatch *request
+		matched := 0
+		if q != "" {
+			for _, col := range a.ws.Collections {
+				for _, r := range col.Requests {
+					if matchesRequest(q, col.Name, r) {
+						if firstMatch == nil {
+							firstMatch = r
+						}
+						matched++
+					}
+				}
+			}
+		}
+		if q != "" && matched == 0 {
+			ui.Column(c).Grow(1).Center().Children(func() {
+				caption(c, "没有匹配的请求")
+			})
+			return
+		}
 		ui.Sidebar(c, &a.ws.Selected, func() {
 			for _, col := range a.ws.Collections {
-				ui.SidebarSection(c, col.Name, &col.Open, func() {
+				reqs := col.Requests
+				open := &col.Open
+				if q != "" {
+					var filtered []*request
 					for _, r := range col.Requests {
+						if matchesRequest(q, col.Name, r) {
+							filtered = append(filtered, r)
+						}
+					}
+					if len(filtered) == 0 {
+						continue
+					}
+					reqs = filtered
+					expanded := true
+					open = &expanded
+				}
+				ui.SidebarSection(c, col.Name, open, func() {
+					for _, r := range reqs {
 						// The item's label grows; Reverse puts the method tag, built after it, on its left.
 						ui.SidebarItem(c, r.ID, nil, r.Name).Reverse().Children(func() {
 							tag := ui.Text(c, methodShort(r.Method)).Font("monospace").FontSize(9).Bold().Width(32).Shrink(0)
@@ -399,10 +447,23 @@ func (a *app) sidebar(c *ui.Context) {
 				})
 			}
 		}).Grow(1).Background(ui.Transparent).Label("Collections")
+		if submitted && firstMatch != nil {
+			a.ws.Selected = firstMatch.ID
+		}
 	})
 	if action != nil {
 		action()
 	}
+}
+
+func matchesRequest(query, colName string, r *request) bool {
+	haystack := strings.ToLower(colName + " " + r.Method + " " + r.Name + " " + r.URL)
+	for term := range strings.FieldsSeq(strings.ToLower(query)) {
+		if !strings.Contains(haystack, term) {
+			return false
+		}
+	}
+	return true
 }
 
 func methodShort(m string) string {

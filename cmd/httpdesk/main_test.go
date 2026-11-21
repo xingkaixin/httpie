@@ -193,3 +193,21 @@ func TestMergeCookies(t *testing.T) {
 		}
 	}
 }
+
+func TestWriteFileAtomic(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nested", "workspace.json")
+	if err := writeFileAtomic(path, []byte(`{"ok":true}`)); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o600 {
+		t.Errorf("perm = %o, want 600", perm)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil || string(got) != `{"ok":true}` {
+		t.Fatalf("read %q %v", got, err)
+	}
+}

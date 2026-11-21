@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/egoist/mygo"
@@ -64,19 +65,24 @@ func statusColor(code int) ui.Color {
 }
 
 type app struct {
-	win       *mygo.Window
-	path      string
-	resDir    string
-	saved     []byte
-	ws        *workspace
-	responses map[string]*response
-	history   map[string][]entry
-	inflight  map[string]context.CancelFunc
-	resSeq    map[string]int
-	cmpSeq    int
-	url       ui.Handle
-	synced    struct{ id, url string }
-	curl      string
+	win         *mygo.Window
+	path        string
+	resDir      string
+	saved       []byte
+	rendered    bool
+	saveMu      sync.Mutex
+	writeMu     sync.Mutex
+	pendingSave []byte
+	saving      bool
+	ws          *workspace
+	responses   map[string]*response
+	history     map[string][]entry
+	inflight    map[string]context.CancelFunc
+	resSeq      map[string]int
+	cmpSeq      int
+	url         ui.Handle
+	synced      struct{ id, url string }
+	curl        string
 	// notice is a toast for the next frame, from a goroutine's Update.
 	notice string
 
@@ -107,16 +113,101 @@ type app struct {
 	editing                string
 }
 
-func (a *app) saveIfChanged() {
-	data, err := json.MarshalIndent(a.ws, "", "  ")
-	if err != nil || bytes.Equal(data, a.saved) {
+func (a *app) saveIfChanged(syncWrite bool) {
+	if !syncWrite && !a.rendered {
 		return
 	}
-	if err := os.WriteFile(a.path, data, 0o644); err != nil {
-		log.Printf("save: %v", err)
+	a.rendered = false
+	data, err := json.MarshalIndent(a.ws, "", "  ")
+	if err != nil {
+		return
+	}
+	if bytes.Equal(data, a.saved) {
+		if syncWrite {
+			a.flushPendingSave()
+		}
 		return
 	}
 	a.saved = data
+	a.saveMu.Lock()
+	a.pendingSave = data
+	if syncWrite {
+		a.saveMu.Unlock()
+		a.flushPendingSave()
+		return
+	}
+	if a.saving {
+		a.saveMu.Unlock()
+		return
+	}
+	a.saving = true
+	a.saveMu.Unlock()
+	go a.drainSaves()
+}
+
+func (a *app) drainSaves() {
+	for {
+		a.writeMu.Lock()
+		a.saveMu.Lock()
+		data := a.pendingSave
+		a.pendingSave = nil
+		if data == nil {
+			a.saving = false
+			a.saveMu.Unlock()
+			a.writeMu.Unlock()
+			return
+		}
+		a.saveMu.Unlock()
+		if err := writeFileAtomic(a.path, data); err != nil {
+			log.Printf("save: %v", err)
+		}
+		a.writeMu.Unlock()
+	}
+}
+
+func (a *app) flushPendingSave() {
+	a.writeMu.Lock()
+	defer a.writeMu.Unlock()
+	a.saveMu.Lock()
+	data := a.pendingSave
+	a.pendingSave = nil
+	a.saveMu.Unlock()
+	if data == nil {
+		return
+	}
+	if err := writeFileAtomic(a.path, data); err != nil {
+		log.Printf("save: %v", err)
+	}
+}
+
+func writeFileAtomic(path string, data []byte) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	f, err := os.CreateTemp(dir, ".workspace-*")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	if _, err = f.Write(data); err != nil {
+		f.Close()
+		os.Remove(tmp)
+		return err
+	}
+	if err = f.Close(); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	if err = os.Chmod(tmp, 0o600); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	if err = os.Rename(tmp, path); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	return nil
 }
 
 func caption(c *ui.Context, s string) ui.Element {
@@ -210,6 +301,7 @@ func withCount(label string, rows []kvtable.Pair) string {
 }
 
 func (a *app) view(c *ui.Context) {
+	a.rendered = true
 	t := *c.Theme()
 	t.Accent, t.AccentHover, t.AccentPressed = ui.Hex("#3e9e57"), ui.Hex("#368c4c"), ui.Hex("#2f7a42")
 	c.SetTheme(&t)
@@ -1009,11 +1101,11 @@ func main() {
 		})
 		go func() {
 			for range time.Tick(time.Second) {
-				mygo.RunOnMain(a.saveIfChanged)
+				mygo.RunOnMain(func() { a.saveIfChanged(false) })
 			}
 		}()
 	})
-	mygo.App.OnBeforeQuit(func(*mygo.QuitEvent) { a.saveIfChanged() })
+	mygo.App.OnBeforeQuit(func(*mygo.QuitEvent) { a.saveIfChanged(true) })
 	if err := mygo.App.Run(); err != nil {
 		log.Fatal(err)
 	}
